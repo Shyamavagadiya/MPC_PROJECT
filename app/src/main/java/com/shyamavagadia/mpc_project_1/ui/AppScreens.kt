@@ -42,6 +42,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -75,12 +77,34 @@ enum class Role { Teacher, Student }
 @Composable
 fun AppRoot() {
     var role by remember { mutableStateOf(Role.Teacher) }
-    Scaffold(topBar = { TopAppBar(title = { Text("Attendance - ${role.name}") }) }) { inner ->
-        Column(Modifier.padding(inner)) {
-            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { role = Role.Teacher }) { Text("Teacher") }
-                Button(onClick = { role = Role.Student }) { Text("Student") }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                modifier = Modifier.height(56.dp),
+                title = { Text("Attendance - ${role.name}", style = MaterialTheme.typography.titleMedium) },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            )
+        },
+        bottomBar = {
+            NavigationBar {
+                NavigationBarItem(
+                    selected = role == Role.Teacher,
+                    onClick = { role = Role.Teacher },
+                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                    label = { Text("Teacher") }
+                )
+                NavigationBarItem(
+                    selected = role == Role.Student,
+                    onClick = { role = Role.Student },
+                    icon = { Icon(Icons.Default.LocationOn, contentDescription = null) },
+                    label = { Text("Student") }
+                )
             }
+        }
+    ) { inner ->
+        Box(Modifier.padding(inner)) {
             when (role) {
                 Role.Teacher -> TeacherScreen()
                 Role.Student -> StudentScreen()
@@ -141,7 +165,8 @@ fun TeacherScreen() {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Teacher Dashboard") },
+                modifier = Modifier.height(56.dp),
+                title = { Text("Teacher Dashboard", style = MaterialTheme.typography.titleMedium) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -169,7 +194,9 @@ fun TeacherScreen() {
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                 ) {
                     Column(
-                        modifier = Modifier.padding(20.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Icon(
@@ -250,7 +277,7 @@ fun TeacherScreen() {
                                         ) {
                                             Column(modifier = Modifier.padding(12.dp)) {
                                                 Text(
-                                                    "✅ Location Captured",
+                                                    "Location captured",
                                                     fontWeight = FontWeight.Medium,
                                                     color = MaterialTheme.colorScheme.onPrimaryContainer
                                                 )
@@ -273,7 +300,7 @@ fun TeacherScreen() {
                                         }
                                     } else {
                                         Text(
-                                            "📍 No location captured yet",
+                                            "No location captured yet",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -310,8 +337,11 @@ fun TeacherScreen() {
                                                 color = MaterialTheme.colorScheme.onPrimary
                                             )
                                             Spacer(modifier = Modifier.size(8.dp))
+                                        } else {
+                                            Icon(Icons.Default.LocationOn, contentDescription = null)
+                                            Spacer(modifier = Modifier.size(8.dp))
                                         }
-                                        Text(if (isCapturing) "Capturing..." else "📱 Capture Current Location")
+                                        Text(if (isCapturing) "Capturing..." else "Capture current location")
                                     }
                                 }
                             }
@@ -371,7 +401,7 @@ fun TeacherScreen() {
                                 modifier = Modifier.fillMaxWidth(),
                                 enabled = name.isNotBlank() && capturedLocation != null && start != null && end != null
                             ) {
-                                Text("💾 Save Class Location")
+                                Text("Save class location")
                             }
                         }
                     }
@@ -408,12 +438,12 @@ fun TeacherScreen() {
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    "📍 ${String.format("%.6f", classLocation.latitude)}, ${String.format("%.6f", classLocation.longitude)}",
+                                    "Location: ${String.format("%.6f", classLocation.latitude)}, ${String.format("%.6f", classLocation.longitude)}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
-                                    "📏 Radius: ${classLocation.radiusMeters}m",
+                                    "Radius: ${classLocation.radiusMeters}m",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -485,6 +515,9 @@ fun StudentScreen() {
     var canCheckIn by remember { mutableStateOf(false) }
     var checkInMessage by remember { mutableStateOf("") }
 
+    // Persisted location enabled preference
+    val prefs = remember { ctx.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
+
     val locationClient = remember { LocationServices.getFusedLocationProviderClient(ctx) }
     
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -492,6 +525,7 @@ fun StudentScreen() {
     ) { isGranted ->
         if (isGranted) {
             isLocationEnabled = true
+            prefs.edit().putBoolean("location_enabled", true).apply()
             // Start location updates
             scope.launch {
                 try {
@@ -504,6 +538,22 @@ fun StudentScreen() {
                     // Handle error
                 }
             }
+        }
+    }
+
+    // Restore persisted location enabled state on enter
+    LaunchedEffect(Unit) {
+        val saved = prefs.getBoolean("location_enabled", false)
+        val granted = ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (saved && granted) {
+            isLocationEnabled = true
+            try {
+                val location = locationClient.getCurrentLocation(
+                    Priority.PRIORITY_HIGH_ACCURACY,
+                    CancellationTokenSource().token
+                ).await()
+                currentLocation = location
+            } catch (_: Exception) {}
         }
     }
 
@@ -549,7 +599,8 @@ fun StudentScreen() {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Student Check-in") },
+                modifier = Modifier.height(56.dp),
+                title = { Text("Student Check-in", style = MaterialTheme.typography.titleMedium) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -570,7 +621,9 @@ fun StudentScreen() {
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                 ) {
                     Column(
-                        modifier = Modifier.padding(20.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Icon(
@@ -615,7 +668,7 @@ fun StudentScreen() {
                         if (!isLocationEnabled) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
-                                    "❌ Location not enabled",
+                                    "Location not enabled",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.error
                                 )
@@ -625,6 +678,7 @@ fun StudentScreen() {
                                         when {
                                             ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED -> {
                                                 isLocationEnabled = true
+                                                prefs.edit().putBoolean("location_enabled", true).apply()
                                                 scope.launch {
                                                     try {
                                                         val location = locationClient.getCurrentLocation(
@@ -652,7 +706,7 @@ fun StudentScreen() {
                                 ) {
                                     Column(modifier = Modifier.padding(12.dp)) {
                                         Text(
-                                            "✅ Location Active",
+                                            "Location active",
                                             fontWeight = FontWeight.Medium,
                                             color = MaterialTheme.colorScheme.onPrimaryContainer
                                         )
@@ -666,11 +720,22 @@ fun StudentScreen() {
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onPrimaryContainer
                                         )
-                                        Text(
-                                            "Accuracy: ${String.format("%.1f", currentLocation!!.accuracy)}m",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                                        )
+                                        Spacer(modifier = Modifier.height(12.dp))
+                                        OutlinedButton(
+                                            onClick = {
+                                                // Disable and clear state
+                                                isLocationEnabled = false
+                                                prefs.edit().putBoolean("location_enabled", false).apply()
+                                                currentLocation = null
+                                                nearestClass = null
+                                                distanceToNearest = null
+                                                canCheckIn = false
+                                                checkInMessage = ""
+                                            },
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text("Disable Location")
+                                        }
                                     }
                                 }
                             } else {
@@ -679,7 +744,7 @@ fun StudentScreen() {
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                                    Text("⏳ Getting location...")
+                                    Text("Getting location...")
                                 }
                             }
                         }
@@ -702,8 +767,8 @@ fun StudentScreen() {
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(Icons.Default.Add, contentDescription = null)
-                                Text("Nearest Class", fontWeight = FontWeight.Medium)
+                                Icon(Icons.Default.LocationOn, contentDescription = null)
+                                Text("Nearest class", fontWeight = FontWeight.Medium)
                             }
 
                             Card(
@@ -716,8 +781,8 @@ fun StudentScreen() {
                                         fontWeight = FontWeight.Bold
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
-                                    Text("📏 Distance: ${String.format("%.0f", distanceToNearest!!)}m")
-                                    Text("🎯 Required: ≤${nearestClass!!.radiusMeters}m")
+                                    Text("Distance: ${String.format("%.0f", distanceToNearest!!)}m")
+                                    Text("Required: ≤${nearestClass!!.radiusMeters}m")
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
                                         checkInMessage,
@@ -753,7 +818,7 @@ fun StudentScreen() {
                     modifier = Modifier.fillMaxWidth(),
                     enabled = canCheckIn
                 ) {
-                    Text("✅ Check In")
+                    Text("Check in")
                 }
             }
 
@@ -787,12 +852,12 @@ fun StudentScreen() {
                                     fontWeight = FontWeight.Medium
                                 )
                                 Text(
-                                    "🕐 ${java.text.SimpleDateFormat("MMM dd, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(record.timestamp))}",
+                                    "Time: ${java.text.SimpleDateFormat("MMM dd, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(record.timestamp))}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
-                                    "📍 ${String.format("%.6f", record.latitude)}, ${String.format("%.6f", record.longitude)}",
+                                    "Location: ${String.format("%.6f", record.latitude)}, ${String.format("%.6f", record.longitude)}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
