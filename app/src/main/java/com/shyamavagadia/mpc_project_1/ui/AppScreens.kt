@@ -69,40 +69,43 @@ import com.shyamavagadia.mpc_project_1.data.TimeWindow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
-enum class Role { Teacher, Student }
-
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun AppRoot() {
-    var role by remember { mutableStateOf(Role.Teacher) }
-    Scaffold(topBar = { TopAppBar(title = { Text("Attendance - ${role.name}") }) }) { inner ->
-        Column(Modifier.padding(inner)) {
-            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { role = Role.Teacher }) { Text("Teacher") }
-                Button(onClick = { role = Role.Student }) { Text("Student") }
-            }
-            when (role) {
-                Role.Teacher -> TeacherScreen()
-                Role.Student -> StudentScreen()
-            }
+    var currentUser by remember { mutableStateOf<com.shyamavagadia.mpc_project_1.data.User?>(null) }
+    
+    if (currentUser == null) {
+        AuthScreen(onAuthSuccess = { user ->
+            currentUser = user
+        })
+    } else {
+        when (currentUser!!.role) {
+            com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER -> TeacherScreen(
+                currentUser = currentUser!!,
+                onLogout = { currentUser = null }
+            )
+            com.shyamavagadia.mpc_project_1.data.UserRole.STUDENT -> StudentScreen(
+                currentUser = currentUser!!,
+                onLogout = { currentUser = null }
+            )
         }
     }
 }
 
-class TeacherViewModel(private val repo: AttendanceRepository) : ViewModel() {
-    fun classes() = repo.observeClasses()
+class TeacherViewModel(private val repo: AttendanceRepository, private val teacherId: Long) : ViewModel() {
+    fun classes() = repo.observeClassesByTeacher(teacherId)
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun TeacherScreen() {
+fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogout: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val repo = remember { AttendanceRepository.get(ctx) }
     val vm = viewModel<TeacherViewModel>(factory = object : androidx.lifecycle.ViewModelProvider.Factory {
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             @Suppress("UNCHECKED_CAST")
-            return TeacherViewModel(repo) as T
+            return TeacherViewModel(repo, currentUser.id) as T
         }
     })
     val classes by vm.classes().collectAsState(initial = emptyList())
@@ -141,7 +144,12 @@ fun TeacherScreen() {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Teacher Dashboard") },
+                title = { Text("Teacher Dashboard - ${currentUser.name}") },
+                actions = {
+                    IconButton(onClick = onLogout) {
+                        Icon(Icons.Default.Close, contentDescription = "Logout")
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
@@ -360,7 +368,8 @@ fun TeacherScreen() {
                                                     name = name,
                                                     latitude = capturedLocation!!.latitude,
                                                     longitude = capturedLocation!!.longitude,
-                                                    radiusMeters = radI
+                                                    radiusMeters = radI,
+                                                    teacherId = currentUser.id
                                                 )
                                             )
                                             repo.setTimeWindows(id, listOf(TimeWindow(classLocationId = id, startMinutesOfDay = s, endMinutesOfDay = e)))
@@ -471,12 +480,12 @@ fun TeacherScreen() {
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun StudentScreen() {
+fun StudentScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogout: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val repo = remember { AttendanceRepository.get(ctx) }
     val classes by repo.observeClasses().collectAsState(initial = emptyList())
-    val attendance by repo.observeAttendance().collectAsState(initial = emptyList())
+    val attendance by repo.observeAttendanceByStudent(currentUser.id).collectAsState(initial = emptyList())
 
     var currentLocation by remember { mutableStateOf<Location?>(null) }
     var isLocationEnabled by remember { mutableStateOf(false) }
@@ -740,6 +749,7 @@ fun StudentScreen() {
                                 repo.insertAttendance(
                                     com.shyamavagadia.mpc_project_1.data.Attendance(
                                         classLocationId = nearestClass!!.id,
+                                        studentId = currentUser.id,
                                         timestamp = System.currentTimeMillis(),
                                         latitude = currentLocation!!.latitude,
                                         longitude = currentLocation!!.longitude,

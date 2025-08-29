@@ -6,11 +6,12 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [ClassLocation::class, TimeWindow::class, Attendance::class],
-    version = 1,
+    entities = [User::class, ClassLocation::class, TimeWindow::class, Attendance::class],
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
+    abstract fun userDao(): UserDao
     abstract fun classLocationDao(): ClassLocationDao
     abstract fun timeWindowDao(): TimeWindowDao
     abstract fun attendanceDao(): AttendanceDao
