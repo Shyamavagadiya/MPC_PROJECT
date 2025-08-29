@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -37,6 +38,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -68,10 +70,10 @@ import com.google.android.gms.tasks.CancellationTokenSource
 import com.shyamavagadia.mpc_project_1.data.AttendanceRepository
 import com.shyamavagadia.mpc_project_1.data.ClassLocation
 import com.shyamavagadia.mpc_project_1.data.TimeWindow
+import com.shyamavagadia.mpc_project_1.data.TimetableEntry
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
-
-enum class Role { Teacher, Student }
+import com.shyamavagadia.mpc_project_1.data.SessionManager
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -109,35 +111,44 @@ fun AppRoot() {
                 Role.Teacher -> TeacherScreen()
                 Role.Student -> StudentScreen()
             }
-        }
+            }
     }
 }
 
-class TeacherViewModel(private val repo: AttendanceRepository) : ViewModel() {
-    fun classes() = repo.observeClasses()
+class TeacherViewModel(private val repo: AttendanceRepository, private val teacherId: Long) : ViewModel() {
+    fun classes() = repo.observeClassesByTeacher(teacherId)
+    fun timetable() = repo.observeTimetableForTeacher(teacherId)
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun TeacherScreen() {
+fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogout: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val repo = remember { AttendanceRepository.get(ctx) }
     val vm = viewModel<TeacherViewModel>(factory = object : androidx.lifecycle.ViewModelProvider.Factory {
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             @Suppress("UNCHECKED_CAST")
-            return TeacherViewModel(repo) as T
+            return TeacherViewModel(repo, currentUser.id) as T
         }
     })
     val classes by vm.classes().collectAsState(initial = emptyList())
+    val timetable by vm.timetable().collectAsState(initial = emptyList())
 
     var name by remember { mutableStateOf("") }
     var capturedLocation by remember { mutableStateOf<Location?>(null) }
     var radius by remember { mutableStateOf("40") }
+    // Optional time window removed for class creation
     var start by remember { mutableStateOf<Int?>(null) }
     var end by remember { mutableStateOf<Int?>(null) }
     var isCapturing by remember { mutableStateOf(false) }
     var showAddForm by remember { mutableStateOf(false) }
+    var showAddTimetable by remember { mutableStateOf(false) }
+    var subject by remember { mutableStateOf("") }
+    var selectedClassId by remember { mutableStateOf<Long?>(null) }
+    var selectedDay by remember { mutableStateOf(2) } // default Monday (Calendar.MONDAY = 2)
+    var ttStart by remember { mutableStateOf<Int?>(null) }
+    var ttEnd by remember { mutableStateOf<Int?>(null) }
 
     val locationClient = remember { LocationServices.getFusedLocationProviderClient(ctx) }
     
@@ -173,10 +184,14 @@ fun TeacherScreen() {
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddForm = true }
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Class")
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                FloatingActionButton(onClick = { showAddTimetable = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Timetable Entry")
+                }
+                Spacer(Modifier.height(8.dp))
+                FloatingActionButton(onClick = { showAddForm = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Class")
+                }
             }
         }
     ) { padding ->
@@ -353,56 +368,122 @@ fun TeacherScreen() {
                                 modifier = Modifier.fillMaxWidth()
                             )
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(
-                                    onClick = {
-                                        val t = java.util.Calendar.getInstance()
-                                        TimePickerDialog(ctx, { _, h, m -> start = h * 60 + m }, t.get(java.util.Calendar.HOUR_OF_DAY), t.get(java.util.Calendar.MINUTE), true).show()
-                                    },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(Icons.Default.Add, contentDescription = null)
-                                    Spacer(modifier = Modifier.size(4.dp))
-                                    Text("Start" + (start?.let { " (${it/60}:${"%02d".format(it%60)})" } ?: ""))
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        val t = java.util.Calendar.getInstance()
-                                        TimePickerDialog(ctx, { _, h, m -> end = h * 60 + m }, t.get(java.util.Calendar.HOUR_OF_DAY), t.get(java.util.Calendar.MINUTE), true).show()
-                                    },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(Icons.Default.Add, contentDescription = null)
-                                    Spacer(modifier = Modifier.size(4.dp))
-                                    Text("End" + (end?.let { " (${it/60}:${"%02d".format(it%60)})" } ?: ""))
-                                }
-                            }
+                            // Time window selection removed as per requirement
 
                             Button(
                                 onClick = {
                                     val radI = radius.toIntOrNull() ?: 40
-                                    val s = start
-                                    val e = end
-                                    if (name.isNotBlank() && capturedLocation != null && s != null && e != null) {
+                                    if (name.isNotBlank() && capturedLocation != null) {
                                         scope.launch {
                                             val id = repo.upsertClassLocation(
                                                 ClassLocation(
                                                     name = name,
                                                     latitude = capturedLocation!!.latitude,
                                                     longitude = capturedLocation!!.longitude,
-                                                    radiusMeters = radI
+                                                    radiusMeters = radI,
+                                                    teacherId = currentUser.id
                                                 )
                                             )
-                                            repo.setTimeWindows(id, listOf(TimeWindow(classLocationId = id, startMinutesOfDay = s, endMinutesOfDay = e)))
+                                            // No time window saved now
                                             name = ""; capturedLocation = null; radius = "40"; start = null; end = null; showAddForm = false
                                         }
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                                enabled = name.isNotBlank() && capturedLocation != null && start != null && end != null
+                                enabled = name.isNotBlank() && capturedLocation != null
                             ) {
                                 Text("Save class location")
                             }
+                        }
+                    }
+                }
+            }
+
+            // Add Timetable Form
+            if (classes.isNotEmpty() && showAddTimetable) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Add Timetable Entry", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                IconButton(onClick = { showAddTimetable = false }) { Icon(Icons.Default.Close, contentDescription = "Close") }
+                            }
+
+                            OutlinedTextField(
+                                value = subject,
+                                onValueChange = { subject = it },
+                                label = { Text("Subject (e.g., MA112)") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            // Class selector
+                            Column {
+                                Text("Select Class Location")
+                                Spacer(Modifier.height(8.dp))
+                                classes.forEach { c ->
+                                    OutlinedButton(
+                                        onClick = { selectedClassId = c.id },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            containerColor = if (selectedClassId == c.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                                        )
+                                    ) { Text("${c.name}  (r=${c.radiusMeters}m)") }
+                                }
+                            }
+
+                            // Day selector (simple)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                val days = listOf(2 to "Mon", 3 to "Tue", 4 to "Wed", 5 to "Thu", 6 to "Fri", 7 to "Sat", 1 to "Sun")
+                                days.forEach { (d, n) ->
+                                    OutlinedButton(onClick = { selectedDay = d }, modifier = Modifier.weight(1f)) { Text(n) }
+                                }
+                            }
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = {
+                                    val t = java.util.Calendar.getInstance()
+                                    TimePickerDialog(ctx, { _, h, m -> ttStart = h * 60 + m }, t.get(java.util.Calendar.HOUR_OF_DAY), t.get(java.util.Calendar.MINUTE), true).show()
+                                }, modifier = Modifier.weight(1f)) { Text("Start" + (ttStart?.let { " (${it/60}:${"%02d".format(it%60)})" } ?: "")) }
+                                OutlinedButton(onClick = {
+                                    val t = java.util.Calendar.getInstance()
+                                    TimePickerDialog(ctx, { _, h, m -> ttEnd = h * 60 + m }, t.get(java.util.Calendar.HOUR_OF_DAY), t.get(java.util.Calendar.MINUTE), true).show()
+                                }, modifier = Modifier.weight(1f)) { Text("End" + (ttEnd?.let { " (${it/60}:${"%02d".format(it%60)})" } ?: "")) }
+                            }
+
+                            Button(
+                                onClick = {
+                                    val clsId = selectedClassId
+                                    val s = ttStart
+                                    val e = ttEnd
+                                    if (subject.isNotBlank() && clsId != null && s != null && e != null) {
+                                        scope.launch {
+                                            repo.upsertTimetableEntry(
+                                                TimetableEntry(
+                                                    teacherId = currentUser.id,
+                                                    classLocationId = clsId,
+                                                    subject = subject,
+                                                    dayOfWeek = selectedDay,
+                                                    startMinutesOfDay = s,
+                                                    endMinutesOfDay = e
+                                                )
+                                            )
+                                            subject = ""; selectedClassId = null; ttStart = null; ttEnd = null; showAddTimetable = false
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = subject.isNotBlank() && selectedClassId != null && ttStart != null && ttEnd != null
+                            ) { Text("💾 Save Timetable Entry") }
                         }
                     }
                 }
@@ -495,18 +576,77 @@ fun TeacherScreen() {
                     }
                 }
             }
+
+            // Timetable list
+            if (timetable.isNotEmpty()) {
+                item { Spacer(Modifier.height(8.dp)) }
+                item { Text("Timetable", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                items(timetable) { entry ->
+                    val cls = classes.find { it.id == entry.classLocationId }
+                    Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text(entry.subject, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.height(4.dp))
+                            val dayName = arrayOf("Sun","Mon","Tue","Wed","Thu","Fri","Sat")[entry.dayOfWeek % 7]
+                            Text("$dayName ${entry.startMinutesOfDay/60}:${"%02d".format(entry.startMinutesOfDay%60)} - ${entry.endMinutesOfDay/60}:${"%02d".format(entry.endMinutesOfDay%60)}")
+                            if (cls != null) {
+                                Text("Class: ${cls.name}  •  (${String.format("%.6f", cls.latitude)}, ${String.format("%.6f", cls.longitude)}) r=${cls.radiusMeters}m", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            // Subject-wise attendance for this timetable entry
+                            val attendanceForEntry by remember(entry.id) { repo.observeAttendanceByTimetable(entry.id) }.collectAsState(initial = emptyList())
+                            var showList by remember { mutableStateOf(false) }
+                            val uniqueStudentIds = attendanceForEntry.map { it.studentId }.distinct()
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Attendance: ${uniqueStudentIds.size}")
+                                TextButton(onClick = { showList = !showList }) { Text(if (showList) "Hide" else "View") }
+                            }
+                            if (showList && uniqueStudentIds.isNotEmpty()) {
+                                val scopeLocal = rememberCoroutineScope()
+                                var names by remember(entry.id, uniqueStudentIds) { mutableStateOf<List<String>>(emptyList()) }
+                                LaunchedEffect(entry.id, uniqueStudentIds) {
+                                    val fetched = mutableListOf<String>()
+                                    uniqueStudentIds.forEach { sid ->
+                                        repo.getUserById(sid)?.let { fetched.add(it.name) }
+                                    }
+                                    names = fetched
+                                }
+                                if (names.isNotEmpty()) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        names.forEach { nm -> Text("• $nm", style = MaterialTheme.typography.bodySmall) }
+                                    }
+                                }
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = { scope.launch { repo.deleteTimetableEntry(entry.id) } }) { Text("Delete") }
+                            }
+                        }
+                    }
+                }
+            } else {
+                item { Spacer(Modifier.height(8.dp)) }
+                item {
+                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                        Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("No timetable entries yet")
+                            Spacer(Modifier.height(4.dp))
+                            OutlinedButton(onClick = { showAddTimetable = true }) { Text("Add timetable entry") }
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun StudentScreen() {
+fun StudentScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogout: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val repo = remember { AttendanceRepository.get(ctx) }
     val classes by repo.observeClasses().collectAsState(initial = emptyList())
-    val attendance by repo.observeAttendance().collectAsState(initial = emptyList())
+    val attendance by repo.observeAttendanceByStudent(currentUser.id).collectAsState(initial = emptyList())
 
     var currentLocation by remember { mutableStateOf<Location?>(null) }
     var isLocationEnabled by remember { mutableStateOf(false) }
@@ -805,6 +945,7 @@ fun StudentScreen() {
                                 repo.insertAttendance(
                                     com.shyamavagadia.mpc_project_1.data.Attendance(
                                         classLocationId = nearestClass!!.id,
+                                        studentId = currentUser.id,
                                         timestamp = System.currentTimeMillis(),
                                         latitude = currentLocation!!.latitude,
                                         longitude = currentLocation!!.longitude,
