@@ -590,6 +590,31 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                             if (cls != null) {
                                 Text("Class: ${cls.name}  •  (${String.format("%.6f", cls.latitude)}, ${String.format("%.6f", cls.longitude)}) r=${cls.radiusMeters}m", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                            Spacer(Modifier.height(8.dp))
+                            // Subject-wise attendance for this timetable entry
+                            val attendanceForEntry by remember(entry.id) { repo.observeAttendanceByTimetable(entry.id) }.collectAsState(initial = emptyList())
+                            var showList by remember { mutableStateOf(false) }
+                            val uniqueStudentIds = attendanceForEntry.map { it.studentId }.distinct()
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Attendance: ${uniqueStudentIds.size}")
+                                TextButton(onClick = { showList = !showList }) { Text(if (showList) "Hide" else "View") }
+                            }
+                            if (showList && uniqueStudentIds.isNotEmpty()) {
+                                val scopeLocal = rememberCoroutineScope()
+                                var names by remember(entry.id, uniqueStudentIds) { mutableStateOf<List<String>>(emptyList()) }
+                                LaunchedEffect(entry.id, uniqueStudentIds) {
+                                    val fetched = mutableListOf<String>()
+                                    uniqueStudentIds.forEach { sid ->
+                                        repo.getUserById(sid)?.let { fetched.add(it.name) }
+                                    }
+                                    names = fetched
+                                }
+                                if (names.isNotEmpty()) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        names.forEach { nm -> Text("• $nm", style = MaterialTheme.typography.bodySmall) }
+                                    }
+                                }
+                            }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                                 TextButton(onClick = { scope.launch { repo.deleteTimetableEntry(entry.id) } }) { Text("Delete") }
                             }
