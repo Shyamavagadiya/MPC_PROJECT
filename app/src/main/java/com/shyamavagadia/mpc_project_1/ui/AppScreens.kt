@@ -38,6 +38,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -186,10 +187,14 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showAddForm = true }
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Class")
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                FloatingActionButton(onClick = { showAddTimetable = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Timetable Entry")
+                }
+                Spacer(Modifier.height(8.dp))
+                FloatingActionButton(onClick = { showAddForm = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Class")
+                }
             }
         }
     ) { padding ->
@@ -584,6 +589,9 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                             Text("$dayName ${entry.startMinutesOfDay/60}:${"%02d".format(entry.startMinutesOfDay%60)} - ${entry.endMinutesOfDay/60}:${"%02d".format(entry.endMinutesOfDay%60)}")
                             if (cls != null) {
                                 Text("Class: ${cls.name}  •  (${String.format("%.6f", cls.latitude)}, ${String.format("%.6f", cls.longitude)}) r=${cls.radiusMeters}m", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = { scope.launch { repo.deleteTimetableEntry(entry.id) } }) { Text("Delete") }
                             }
                         }
                     }
