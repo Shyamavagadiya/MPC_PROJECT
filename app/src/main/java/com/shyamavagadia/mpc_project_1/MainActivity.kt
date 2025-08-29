@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.shyamavagadia.mpc_project_1.ui.theme.MPC_project_1Theme
+import com.shyamavagadia.mpc_project_1.ui.AppRoot
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -33,66 +34,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MPC_project_1Theme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    BasicTestScreen(modifier = Modifier.padding(innerPadding))
-                }
+                AppRoot()
             }
         }
-    }
-}
-
-@Composable
-fun BasicTestScreen(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("attendance_prefs", Context.MODE_PRIVATE) }
-    var count by remember { mutableStateOf(prefs.getInt("count", 0)) }
-    var lastTs by remember { mutableStateOf(prefs.getLong("last_ts", 0L)) }
-
-    val formatter = remember {
-        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-            .withZone(ZoneId.systemDefault())
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text(text = "Basic Test Ready")
-        Text(text = "Saved count: $count")
-        Text(text = if (lastTs == 0L) "Last timestamp: -" else "Last timestamp: ${formatter.format(Instant.ofEpochMilli(lastTs))}")
-
-        Button(
-            onClick = {
-                val newCount = count + 1
-                val now = System.currentTimeMillis()
-                prefs.edit().putInt("count", newCount).putLong("last_ts", now).apply()
-                count = newCount
-                lastTs = now
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(text = "Save Test Attendance")
-        }
-
-        Button(
-            onClick = {
-                prefs.edit().clear().apply()
-                count = 0
-                lastTs = 0L
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(text = "Reset Data")
-        }
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun BasicTestScreenPreview() {
-    MPC_project_1Theme {
-        BasicTestScreen()
     }
 }
