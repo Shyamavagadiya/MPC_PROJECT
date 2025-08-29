@@ -43,12 +43,25 @@ data class Attendance(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val classLocationId: Long,
     val studentId: Long, // Add student reference
+    val timetableEntryId: Long? = null,
     val timestamp: Long,
     val latitude: Double,
     val longitude: Double,
     val accuracyMeters: Float,
     val isMock: Boolean,
     val type: AttendanceType = AttendanceType.CHECK_IN
+)
+
+
+@Entity(tableName = "timetable_entries")
+data class TimetableEntry(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val teacherId: Long,
+    val classLocationId: Long,
+    val subject: String,
+    val dayOfWeek: Int, // 1=Sunday..7=Saturday to match java.util.Calendar
+    val startMinutesOfDay: Int,
+    val endMinutesOfDay: Int
 )
 
 

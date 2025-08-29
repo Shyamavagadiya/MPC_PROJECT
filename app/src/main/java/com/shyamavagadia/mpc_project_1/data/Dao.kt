@@ -64,6 +64,25 @@ interface AttendanceDao {
 
     @Query("SELECT * FROM attendance WHERE studentId = :studentId ORDER BY timestamp DESC")
     fun observeByStudent(studentId: Long): Flow<List<Attendance>>
+
+    @Query("SELECT * FROM attendance WHERE timetableEntryId = :entryId ORDER BY timestamp DESC")
+    fun observeByTimetableEntry(entryId: Long): Flow<List<Attendance>>
+}
+
+
+@Dao
+interface TimetableDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entry: TimetableEntry): Long
+
+    @Query("DELETE FROM timetable_entries WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("SELECT * FROM timetable_entries WHERE teacherId = :teacherId ORDER BY dayOfWeek, startMinutesOfDay")
+    fun observeForTeacher(teacherId: Long): Flow<List<TimetableEntry>>
+
+    @Query("SELECT * FROM timetable_entries WHERE dayOfWeek = :dayOfWeek ORDER BY startMinutesOfDay")
+    fun observeForDay(dayOfWeek: Int): Flow<List<TimetableEntry>>
 }
 
 

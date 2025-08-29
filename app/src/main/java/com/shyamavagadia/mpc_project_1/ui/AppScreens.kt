@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -66,27 +67,47 @@ import com.google.android.gms.tasks.CancellationTokenSource
 import com.shyamavagadia.mpc_project_1.data.AttendanceRepository
 import com.shyamavagadia.mpc_project_1.data.ClassLocation
 import com.shyamavagadia.mpc_project_1.data.TimeWindow
+import com.shyamavagadia.mpc_project_1.data.TimetableEntry
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import com.shyamavagadia.mpc_project_1.data.SessionManager
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun AppRoot() {
+    val ctx = LocalContext.current
+    val repo = remember { AttendanceRepository.get(ctx) }
+    val session = remember { SessionManager(ctx) }
     var currentUser by remember { mutableStateOf<com.shyamavagadia.mpc_project_1.data.User?>(null) }
+
+    // Restore session
+    LaunchedEffect(Unit) {
+        session.getLoggedInUserId()?.let { uid ->
+            val user = repo.getUserById(uid)
+            if (user != null) currentUser = user else session.clear()
+        }
+    }
     
     if (currentUser == null) {
         AuthScreen(onAuthSuccess = { user ->
+            session.setLoggedInUserId(user.id)
             currentUser = user
         })
     } else {
         when (currentUser!!.role) {
             com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER -> TeacherScreen(
                 currentUser = currentUser!!,
-                onLogout = { currentUser = null }
+                onLogout = {
+                    session.clear()
+                    currentUser = null
+                }
             )
             com.shyamavagadia.mpc_project_1.data.UserRole.STUDENT -> StudentScreen(
                 currentUser = currentUser!!,
-                onLogout = { currentUser = null }
+                onLogout = {
+                    session.clear()
+                    currentUser = null
+                }
             )
         }
     }
@@ -94,6 +115,7 @@ fun AppRoot() {
 
 class TeacherViewModel(private val repo: AttendanceRepository, private val teacherId: Long) : ViewModel() {
     fun classes() = repo.observeClassesByTeacher(teacherId)
+    fun timetable() = repo.observeTimetableForTeacher(teacherId)
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -109,14 +131,22 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
         }
     })
     val classes by vm.classes().collectAsState(initial = emptyList())
+    val timetable by vm.timetable().collectAsState(initial = emptyList())
 
     var name by remember { mutableStateOf("") }
     var capturedLocation by remember { mutableStateOf<Location?>(null) }
     var radius by remember { mutableStateOf("40") }
+    // Optional time window removed for class creation
     var start by remember { mutableStateOf<Int?>(null) }
     var end by remember { mutableStateOf<Int?>(null) }
     var isCapturing by remember { mutableStateOf(false) }
     var showAddForm by remember { mutableStateOf(false) }
+    var showAddTimetable by remember { mutableStateOf(false) }
+    var subject by remember { mutableStateOf("") }
+    var selectedClassId by remember { mutableStateOf<Long?>(null) }
+    var selectedDay by remember { mutableStateOf(2) } // default Monday (Calendar.MONDAY = 2)
+    var ttStart by remember { mutableStateOf<Int?>(null) }
+    var ttEnd by remember { mutableStateOf<Int?>(null) }
 
     val locationClient = remember { LocationServices.getFusedLocationProviderClient(ctx) }
     
@@ -331,37 +361,12 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                                 modifier = Modifier.fillMaxWidth()
                             )
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(
-                                    onClick = {
-                                        val t = java.util.Calendar.getInstance()
-                                        TimePickerDialog(ctx, { _, h, m -> start = h * 60 + m }, t.get(java.util.Calendar.HOUR_OF_DAY), t.get(java.util.Calendar.MINUTE), true).show()
-                                    },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(Icons.Default.Add, contentDescription = null)
-                                    Spacer(modifier = Modifier.size(4.dp))
-                                    Text("Start" + (start?.let { " (${it/60}:${"%02d".format(it%60)})" } ?: ""))
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        val t = java.util.Calendar.getInstance()
-                                        TimePickerDialog(ctx, { _, h, m -> end = h * 60 + m }, t.get(java.util.Calendar.HOUR_OF_DAY), t.get(java.util.Calendar.MINUTE), true).show()
-                                    },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(Icons.Default.Add, contentDescription = null)
-                                    Spacer(modifier = Modifier.size(4.dp))
-                                    Text("End" + (end?.let { " (${it/60}:${"%02d".format(it%60)})" } ?: ""))
-                                }
-                            }
+                            // Time window selection removed as per requirement
 
                             Button(
                                 onClick = {
                                     val radI = radius.toIntOrNull() ?: 40
-                                    val s = start
-                                    val e = end
-                                    if (name.isNotBlank() && capturedLocation != null && s != null && e != null) {
+                                    if (name.isNotBlank() && capturedLocation != null) {
                                         scope.launch {
                                             val id = repo.upsertClassLocation(
                                                 ClassLocation(
@@ -372,16 +377,106 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                                                     teacherId = currentUser.id
                                                 )
                                             )
-                                            repo.setTimeWindows(id, listOf(TimeWindow(classLocationId = id, startMinutesOfDay = s, endMinutesOfDay = e)))
+                                            // No time window saved now
                                             name = ""; capturedLocation = null; radius = "40"; start = null; end = null; showAddForm = false
                                         }
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
-                                enabled = name.isNotBlank() && capturedLocation != null && start != null && end != null
+                                enabled = name.isNotBlank() && capturedLocation != null
                             ) {
                                 Text("💾 Save Class Location")
                             }
+                        }
+                    }
+                }
+            }
+
+            // Add Timetable Form
+            if (classes.isNotEmpty() && showAddTimetable) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Add Timetable Entry", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                IconButton(onClick = { showAddTimetable = false }) { Icon(Icons.Default.Close, contentDescription = "Close") }
+                            }
+
+                            OutlinedTextField(
+                                value = subject,
+                                onValueChange = { subject = it },
+                                label = { Text("Subject (e.g., MA112)") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            // Class selector
+                            Column {
+                                Text("Select Class Location")
+                                Spacer(Modifier.height(8.dp))
+                                classes.forEach { c ->
+                                    OutlinedButton(
+                                        onClick = { selectedClassId = c.id },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            containerColor = if (selectedClassId == c.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                                        )
+                                    ) { Text("${c.name}  (r=${c.radiusMeters}m)") }
+                                }
+                            }
+
+                            // Day selector (simple)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                val days = listOf(2 to "Mon", 3 to "Tue", 4 to "Wed", 5 to "Thu", 6 to "Fri", 7 to "Sat", 1 to "Sun")
+                                days.forEach { (d, n) ->
+                                    OutlinedButton(onClick = { selectedDay = d }, modifier = Modifier.weight(1f)) { Text(n) }
+                                }
+                            }
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = {
+                                    val t = java.util.Calendar.getInstance()
+                                    TimePickerDialog(ctx, { _, h, m -> ttStart = h * 60 + m }, t.get(java.util.Calendar.HOUR_OF_DAY), t.get(java.util.Calendar.MINUTE), true).show()
+                                }, modifier = Modifier.weight(1f)) { Text("Start" + (ttStart?.let { " (${it/60}:${"%02d".format(it%60)})" } ?: "")) }
+                                OutlinedButton(onClick = {
+                                    val t = java.util.Calendar.getInstance()
+                                    TimePickerDialog(ctx, { _, h, m -> ttEnd = h * 60 + m }, t.get(java.util.Calendar.HOUR_OF_DAY), t.get(java.util.Calendar.MINUTE), true).show()
+                                }, modifier = Modifier.weight(1f)) { Text("End" + (ttEnd?.let { " (${it/60}:${"%02d".format(it%60)})" } ?: "")) }
+                            }
+
+                            Button(
+                                onClick = {
+                                    val clsId = selectedClassId
+                                    val s = ttStart
+                                    val e = ttEnd
+                                    if (subject.isNotBlank() && clsId != null && s != null && e != null) {
+                                        scope.launch {
+                                            repo.upsertTimetableEntry(
+                                                TimetableEntry(
+                                                    teacherId = currentUser.id,
+                                                    classLocationId = clsId,
+                                                    subject = subject,
+                                                    dayOfWeek = selectedDay,
+                                                    startMinutesOfDay = s,
+                                                    endMinutesOfDay = e
+                                                )
+                                            )
+                                            subject = ""; selectedClassId = null; ttStart = null; ttEnd = null; showAddTimetable = false
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = subject.isNotBlank() && selectedClassId != null && ttStart != null && ttEnd != null
+                            ) { Text("💾 Save Timetable Entry") }
                         }
                     }
                 }
@@ -474,6 +569,37 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                     }
                 }
             }
+
+            // Timetable list
+            if (timetable.isNotEmpty()) {
+                item { Spacer(Modifier.height(8.dp)) }
+                item { Text("Timetable", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                items(timetable) { entry ->
+                    val cls = classes.find { it.id == entry.classLocationId }
+                    Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text(entry.subject, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.height(4.dp))
+                            val dayName = arrayOf("Sun","Mon","Tue","Wed","Thu","Fri","Sat")[entry.dayOfWeek % 7]
+                            Text("$dayName ${entry.startMinutesOfDay/60}:${"%02d".format(entry.startMinutesOfDay%60)} - ${entry.endMinutesOfDay/60}:${"%02d".format(entry.endMinutesOfDay%60)}")
+                            if (cls != null) {
+                                Text("Class: ${cls.name}  •  (${String.format("%.6f", cls.latitude)}, ${String.format("%.6f", cls.longitude)}) r=${cls.radiusMeters}m", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            } else {
+                item { Spacer(Modifier.height(8.dp)) }
+                item {
+                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                        Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("No timetable entries yet")
+                            Spacer(Modifier.height(4.dp))
+                            OutlinedButton(onClick = { showAddTimetable = true }) { Text("Add timetable entry") }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -558,7 +684,12 @@ fun StudentScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Student Check-in") },
+                title = { Text("Student Check-in - ${currentUser.name}") },
+                actions = {
+                    IconButton(onClick = onLogout) {
+                        Icon(Icons.Default.Close, contentDescription = "Logout")
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )

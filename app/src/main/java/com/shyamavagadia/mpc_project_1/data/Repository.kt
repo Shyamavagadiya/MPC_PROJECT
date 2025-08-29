@@ -82,8 +82,19 @@ class AttendanceRepository private constructor(private val db: AppDatabase) {
     fun observeAttendance(): Flow<List<Attendance>> = db.attendanceDao().observeAll()
     fun observeAttendanceByStudent(studentId: Long): Flow<List<Attendance>> = 
         db.attendanceDao().observeByStudent(studentId)
+    fun observeAttendanceByTimetable(entryId: Long): Flow<List<Attendance>> =
+        db.attendanceDao().observeByTimetableEntry(entryId)
     
     suspend fun insertAttendance(a: Attendance): Long = db.attendanceDao().insert(a)
+
+    // Timetable methods
+    fun observeTimetableForTeacher(teacherId: Long): Flow<List<TimetableEntry>> =
+        db.timetableDao().observeForTeacher(teacherId)
+    fun observeTimetableForDay(dayOfWeek: Int): Flow<List<TimetableEntry>> =
+        db.timetableDao().observeForDay(dayOfWeek)
+    suspend fun upsertTimetableEntry(entry: TimetableEntry): Long =
+        db.timetableDao().upsert(entry)
+    suspend fun deleteTimetableEntry(id: Long) = db.timetableDao().deleteById(id)
 
     companion object {
         @Volatile private var INSTANCE: AttendanceRepository? = null

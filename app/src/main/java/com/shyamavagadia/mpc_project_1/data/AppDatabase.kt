@@ -6,8 +6,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [User::class, ClassLocation::class, TimeWindow::class, Attendance::class],
-    version = 2,
+    entities = [User::class, ClassLocation::class, TimeWindow::class, Attendance::class, TimetableEntry::class],
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -15,6 +15,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun classLocationDao(): ClassLocationDao
     abstract fun timeWindowDao(): TimeWindowDao
     abstract fun attendanceDao(): AttendanceDao
+    abstract fun timetableDao(): TimetableDao
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
