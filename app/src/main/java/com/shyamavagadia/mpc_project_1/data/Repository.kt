@@ -31,15 +31,24 @@ class AttendanceRepository private constructor(private val db: AppDatabase) {
         )
         val teacherId = registerUser(teacher)
         
-        // Create sample student
-        val student = User(
-            username = "student",
+        // Create sample students
+        val student1 = User(
+            username = "student1",
             password = "password",
             role = UserRole.STUDENT,
             name = "John Doe",
-            email = "student@university.edu"
+            email = "john@university.edu"
         )
-        registerUser(student)
+        val student1Id = registerUser(student1)
+        
+        val student2 = User(
+            username = "student2", 
+            password = "password",
+            role = UserRole.STUDENT,
+            name = "Jane Smith",
+            email = "jane@university.edu"
+        )
+        val student2Id = registerUser(student2)
         
         // Create sample class location
         val classLocation = ClassLocation(
@@ -51,13 +60,38 @@ class AttendanceRepository private constructor(private val db: AppDatabase) {
         )
         val classId = upsertClassLocation(classLocation)
         
-        // Create time window
-        setTimeWindows(classId, listOf(
-            TimeWindow(
-                classLocationId = classId,
-                startMinutesOfDay = 9 * 60, // 9:00 AM
-                endMinutesOfDay = 10 * 60 + 30 // 10:30 AM
-            )
+        // Create sample timetable entry
+        val timetableEntry = TimetableEntry(
+            teacherId = teacherId,
+            classLocationId = classId,
+            subject = "MA102 - Calculus",
+            dayOfWeek = 2, // Monday
+            startMinutesOfDay = 9 * 60, // 9:00 AM
+            endMinutesOfDay = 10 * 60 + 30 // 10:30 AM
+        )
+        val entryId = upsertTimetableEntry(timetableEntry)
+        
+        // Create sample attendance records
+        insertAttendance(Attendance(
+            classLocationId = classId,
+            studentId = student1Id,
+            timetableEntryId = entryId,
+            timestamp = System.currentTimeMillis(),
+            latitude = 40.7128,
+            longitude = -74.0060,
+            accuracyMeters = 10f,
+            isMock = false
+        ))
+        
+        insertAttendance(Attendance(
+            classLocationId = classId,
+            studentId = student2Id,
+            timetableEntryId = entryId,
+            timestamp = System.currentTimeMillis(),
+            latitude = 40.7128,
+            longitude = -74.0060,
+            accuracyMeters = 15f,
+            isMock = false
         ))
     }
 
@@ -84,6 +118,10 @@ class AttendanceRepository private constructor(private val db: AppDatabase) {
         db.attendanceDao().observeByStudent(studentId)
     fun observeAttendanceByTimetable(entryId: Long): Flow<List<Attendance>> =
         db.attendanceDao().observeByTimetableEntry(entryId)
+    suspend fun getAttendanceForStudentAndEntry(entryId: Long, studentId: Long): Attendance? =
+        db.attendanceDao().getAttendanceForStudentAndEntry(entryId, studentId)
+    suspend fun deleteAttendanceForStudentAndEntry(entryId: Long, studentId: Long) =
+        db.attendanceDao().deleteAttendanceForStudentAndEntry(entryId, studentId)
     
     suspend fun insertAttendance(a: Attendance): Long = db.attendanceDao().insert(a)
 

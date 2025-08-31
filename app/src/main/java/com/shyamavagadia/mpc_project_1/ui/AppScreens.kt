@@ -69,6 +69,9 @@ import com.shyamavagadia.mpc_project_1.data.AttendanceRepository
 import com.shyamavagadia.mpc_project_1.data.ClassLocation
 import com.shyamavagadia.mpc_project_1.data.TimeWindow
 import com.shyamavagadia.mpc_project_1.data.TimetableEntry
+import com.shyamavagadia.mpc_project_1.data.User
+import com.shyamavagadia.mpc_project_1.data.UserRole
+import com.shyamavagadia.mpc_project_1.data.Attendance
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import com.shyamavagadia.mpc_project_1.data.SessionManager
@@ -193,7 +196,7 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                 }
                 Spacer(Modifier.height(8.dp))
                 FloatingActionButton(onClick = { showAddForm = true }) {
-                    Icon(Icons.Default.Add, contentDescription = "Add Class")
+                Icon(Icons.Default.Add, contentDescription = "Add Class")
                 }
             }
         }
@@ -592,26 +595,69 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                             }
                             Spacer(Modifier.height(8.dp))
                             // Subject-wise attendance for this timetable entry
-                            val attendanceForEntry by remember(entry.id) { repo.observeAttendanceByTimetable(entry.id) }.collectAsState(initial = emptyList())
-                            var showList by remember { mutableStateOf(false) }
-                            val uniqueStudentIds = attendanceForEntry.map { it.studentId }.distinct()
+                            val attendanceForEntry by repo.observeAttendanceByTimetable(entry.id).collectAsState(initial = emptyList())
+                            var showAttendanceManager by remember { mutableStateOf(false) }
+                            val presentStudentIds = attendanceForEntry.map { it.studentId }.distinct()
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text("Attendance: ${uniqueStudentIds.size}")
-                                TextButton(onClick = { showList = !showList }) { Text(if (showList) "Hide" else "View") }
-                            }
-                            if (showList && uniqueStudentIds.isNotEmpty()) {
-                                val scopeLocal = rememberCoroutineScope()
-                                var names by remember(entry.id, uniqueStudentIds) { mutableStateOf<List<String>>(emptyList()) }
-                                LaunchedEffect(entry.id, uniqueStudentIds) {
-                                    val fetched = mutableListOf<String>()
-                                    uniqueStudentIds.forEach { sid ->
-                                        repo.getUserById(sid)?.let { fetched.add(it.name) }
-                                    }
-                                    names = fetched
+                                Text("Present: ${presentStudentIds.size}")
+                                TextButton(onClick = { showAttendanceManager = !showAttendanceManager }) { 
+                                    Text(if (showAttendanceManager) "Hide" else "Manage Attendance") 
                                 }
-                                if (names.isNotEmpty()) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        names.forEach { nm -> Text("• $nm", style = MaterialTheme.typography.bodySmall) }
+                            }
+                            if (showAttendanceManager) {
+                                var allStudents by remember { mutableStateOf<List<User>>(emptyList()) }
+                                LaunchedEffect(Unit) {
+                                    scope.launch {
+                                        repo.observeUsersByRole(UserRole.STUDENT).collect { studentList ->
+                                            allStudents = studentList
+                                        }
+                                    }
+                                }
+                                if (allStudents.isNotEmpty()) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("Attendance Status:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                        allStudents.forEach { student ->
+                                            val isPresent = presentStudentIds.contains(student.id)
+                                            Row(
+                                                Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(student.name, style = MaterialTheme.typography.bodyMedium)
+                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            scope.launch {
+                                                                if (isPresent) {
+                                                                    // Remove attendance
+                                                                    repo.deleteAttendanceForStudentAndEntry(entry.id, student.id)
+                                                                } else {
+                                                                    // Add attendance
+                                                                    val cls = classes.find { it.id == entry.classLocationId }
+                                                                    if (cls != null) {
+                                                                        repo.insertAttendance(Attendance(
+                                                                            classLocationId = entry.classLocationId,
+                                                                            studentId = student.id,
+                                                                            timetableEntryId = entry.id,
+                                                                            timestamp = System.currentTimeMillis(),
+                                                                            latitude = cls.latitude,
+                                                                            longitude = cls.longitude,
+                                                                            accuracyMeters = 0f,
+                                                                            isMock = true // Manual entry
+                                                                        ))
+                                                                    }
+                                                                }
+                                                            }
+                                                        },
+                                                        colors = ButtonDefaults.outlinedButtonColors(
+                                                            containerColor = if (isPresent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                                                        )
+                                                    ) {
+                                                        Text(if (isPresent) "Present" else "Absent")
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -645,13 +691,16 @@ fun StudentScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
     val repo = remember { AttendanceRepository.get(ctx) }
     val classes by repo.observeClasses().collectAsState(initial = emptyList())
     val attendance by repo.observeAttendanceByStudent(currentUser.id).collectAsState(initial = emptyList())
+    
+    // Get today's timetable entries
+    val today = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK)
+    val todayTimetable by repo.observeTimetableForDay(today).collectAsState(initial = emptyList())
 
     var currentLocation by remember { mutableStateOf<Location?>(null) }
     var isLocationEnabled by remember { mutableStateOf(false) }
-    var nearestClass by remember { mutableStateOf<ClassLocation?>(null) }
-    var distanceToNearest by remember { mutableStateOf<Float?>(null) }
-    var canCheckIn by remember { mutableStateOf(false) }
-    var checkInMessage by remember { mutableStateOf("") }
+    var activeClass by remember { mutableStateOf<TimetableEntry?>(null) }
+    var presenceStartTime by remember { mutableStateOf<Long?>(null) }
+    var isTrackingPresence by remember { mutableStateOf(false) }
 
     val locationClient = remember { LocationServices.getFusedLocationProviderClient(ctx) }
     
@@ -675,41 +724,73 @@ fun StudentScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
         }
     }
 
-    // Calculate nearest class and check-in eligibility
-    LaunchedEffect(currentLocation, classes) {
-        if (currentLocation != null && classes.isNotEmpty()) {
-            var minDistance = Float.MAX_VALUE
-            var nearest: ClassLocation? = null
+    // Calculate active class and track presence
+    LaunchedEffect(currentLocation, todayTimetable) {
+        if (currentLocation != null && todayTimetable.isNotEmpty()) {
+            val now = java.util.Calendar.getInstance()
+            val currentMinutes = now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE)
             
-            for (classLocation in classes) {
-                val distance = FloatArray(1)
-                Location.distanceBetween(
-                    currentLocation!!.latitude, currentLocation!!.longitude,
-                    classLocation.latitude, classLocation.longitude,
-                    distance
-                )
-                
-                if (distance[0] < minDistance) {
-                    minDistance = distance[0]
-                    nearest = classLocation
-                }
+            // Find the active class (current time falls within a scheduled class)
+            val active = todayTimetable.find { entry ->
+                currentMinutes >= entry.startMinutesOfDay && currentMinutes <= entry.endMinutesOfDay
             }
             
-            nearestClass = nearest
-            distanceToNearest = minDistance
+            activeClass = active
             
-            // Check if can check in (within radius and time window)
-            if (nearest != null) {
-                val now = java.util.Calendar.getInstance()
-                val currentMinutes = now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE)
-                
-                // For now, just check distance. Time window check will be added when we implement TimeWindow queries
-                canCheckIn = minDistance <= nearest.radiusMeters && currentLocation!!.accuracy <= 30
-                checkInMessage = when {
-                    minDistance > nearest.radiusMeters -> "Too far from ${nearest.name} (${String.format("%.0f", minDistance)}m away)"
-                    currentLocation!!.accuracy > 30 -> "GPS accuracy too low (${String.format("%.0f", currentLocation!!.accuracy)}m)"
-                    else -> "✅ Can check in to ${nearest.name}"
+            if (active != null) {
+                // Check if student is at the right location for this class
+                val classLocation = classes.find { it.id == active.classLocationId }
+                if (classLocation != null) {
+                    val distance = FloatArray(1)
+                    Location.distanceBetween(
+                        currentLocation!!.latitude, currentLocation!!.longitude,
+                        classLocation.latitude, classLocation.longitude,
+                        distance
+                    )
+                    
+                    val isWithinRadius = distance[0] <= classLocation.radiusMeters && currentLocation!!.accuracy <= 30
+                    
+                    if (isWithinRadius && !isTrackingPresence) {
+                        // Start tracking presence
+                        presenceStartTime = System.currentTimeMillis()
+                        isTrackingPresence = true
+                    } else if (!isWithinRadius && isTrackingPresence) {
+                        // Stop tracking presence
+                        presenceStartTime = null
+                        isTrackingPresence = false
+                    }
+                    
+                    // Check if we should mark attendance (25 minutes of continuous presence)
+                    if (isTrackingPresence && presenceStartTime != null) {
+                        val presenceDuration = System.currentTimeMillis() - presenceStartTime!!
+                        val requiredDuration = 25 * 60 * 1000L // 25 minutes in milliseconds
+                        
+                        if (presenceDuration >= requiredDuration) {
+                            // Check if already marked present
+                            val alreadyPresent = attendance.any { it.timetableEntryId == active.id }
+                            if (!alreadyPresent) {
+                                scope.launch {
+                                    repo.insertAttendance(
+                                        Attendance(
+                                            classLocationId = active.classLocationId,
+                                            studentId = currentUser.id,
+                                            timetableEntryId = active.id,
+                                            timestamp = System.currentTimeMillis(),
+                                            latitude = currentLocation!!.latitude,
+                                            longitude = currentLocation!!.longitude,
+                                            accuracyMeters = currentLocation!!.accuracy,
+                                            isMock = false
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
+            } else {
+                // No active class, reset tracking
+                isTrackingPresence = false
+                presenceStartTime = null
             }
         }
     }
@@ -860,74 +941,129 @@ fun StudentScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                 }
             }
 
-            // Nearest class info
-            if (nearestClass != null && distanceToNearest != null) {
+            // Today's Timetable
+            if (todayTimetable.isNotEmpty()) {
                 item {
+                    Text(
+                        "Today's Classes",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                
+                items(todayTimetable) { entry ->
+                    val classLocation = classes.find { it.id == entry.classLocationId }
+                    val isActive = activeClass?.id == entry.id
+                    val isAttended = attendance.any { it.timetableEntryId == entry.id }
+                    
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                        )
                     ) {
                         Column(
-                            modifier = Modifier.padding(20.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.Add, contentDescription = null)
-                                Text("Nearest Class", fontWeight = FontWeight.Medium)
-                            }
-
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                            ) {
-                                Column(modifier = Modifier.padding(16.dp)) {
+                                Column {
                                     Text(
-                                        nearestClass!!.name,
+                                        entry.subject,
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold
                                     )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text("📏 Distance: ${String.format("%.0f", distanceToNearest!!)}m")
-                                    Text("🎯 Required: ≤${nearestClass!!.radiusMeters}m")
-                                    Spacer(modifier = Modifier.height(8.dp))
                                     Text(
-                                        checkInMessage,
+                                        "${entry.startMinutesOfDay/60}:${"%02d".format(entry.startMinutesOfDay%60)} - ${entry.endMinutesOfDay/60}:${"%02d".format(entry.endMinutesOfDay%60)}",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    if (classLocation != null) {
+                                        Text(
+                                            "📍 ${classLocation.name}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                
+                                if (isAttended) {
+                                    Text(
+                                        "✅ Present",
                                         style = MaterialTheme.typography.bodyMedium,
-                                        color = if (canCheckIn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                } else if (isActive) {
+                                    if (isTrackingPresence && presenceStartTime != null) {
+                                        val elapsed = (System.currentTimeMillis() - presenceStartTime!!) / 1000 / 60 // minutes
+                                        val remaining = 25 - elapsed
+                                        Text(
+                                            "⏳ ${remaining.toInt()}min left",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    } else {
+                                        Text(
+                                            "🕐 Active Now",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                            
+                            if (isActive && !isAttended) {
+                                val classLocation = classes.find { it.id == entry.classLocationId }
+                                if (classLocation != null && currentLocation != null) {
+                                    val distance = FloatArray(1)
+                                    Location.distanceBetween(
+                                        currentLocation!!.latitude, currentLocation!!.longitude,
+                                        classLocation.latitude, classLocation.longitude,
+                                        distance
+                                    )
+                                    
+                                    val isWithinRadius = distance[0] <= classLocation.radiusMeters && currentLocation!!.accuracy <= 30
+                                    val statusMessage = when {
+                                        isWithinRadius -> "✅ You're in the right location"
+                                        distance[0] > classLocation.radiusMeters -> "❌ Too far from class (${String.format("%.0f", distance[0])}m away)"
+                                        currentLocation!!.accuracy > 30 -> "❌ GPS accuracy too low"
+                                        else -> "❌ Location not available"
+                                    }
+                                    
+                                    Text(
+                                        statusMessage,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (isWithinRadius) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                                     )
                                 }
                             }
                         }
                     }
                 }
-            }
-
-            // Check-in button
-            item {
-                Button(
-                    onClick = {
-                        if (canCheckIn && currentLocation != null && nearestClass != null) {
-                            scope.launch {
-                                repo.insertAttendance(
-                                    com.shyamavagadia.mpc_project_1.data.Attendance(
-                                        classLocationId = nearestClass!!.id,
-                                        studentId = currentUser.id,
-                                        timestamp = System.currentTimeMillis(),
-                                        latitude = currentLocation!!.latitude,
-                                        longitude = currentLocation!!.longitude,
-                                        accuracyMeters = currentLocation!!.accuracy,
-                                        isMock = false // We'll add mock detection later
-                                    )
-                                )
-                            }
+            } else {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(32.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                "No classes scheduled for today",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = canCheckIn
-                ) {
-                    Text("✅ Check In")
+                    }
                 }
             }
 

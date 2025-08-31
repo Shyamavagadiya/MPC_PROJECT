@@ -67,6 +67,12 @@ interface AttendanceDao {
 
     @Query("SELECT * FROM attendance WHERE timetableEntryId = :entryId ORDER BY timestamp DESC")
     fun observeByTimetableEntry(entryId: Long): Flow<List<Attendance>>
+    
+    @Query("SELECT * FROM attendance WHERE timetableEntryId = :entryId AND studentId = :studentId LIMIT 1")
+    suspend fun getAttendanceForStudentAndEntry(entryId: Long, studentId: Long): Attendance?
+    
+    @Query("DELETE FROM attendance WHERE timetableEntryId = :entryId AND studentId = :studentId")
+    suspend fun deleteAttendanceForStudentAndEntry(entryId: Long, studentId: Long)
 }
 
 
