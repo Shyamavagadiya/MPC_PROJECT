@@ -75,6 +75,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import com.shyamavagadia.mpc_project_1.data.SessionManager
 
+// Bottom navigation tabs (top-level to avoid scoping issues)
+enum class TeacherTab(val title: String) { Dashboard("Dashboard"), Timetable("Timetable") }
+enum class StudentTab(val title: String) { Home("Home"), History("History") }
+
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun AppRoot() {
@@ -113,6 +117,13 @@ fun AppRoot() {
         currentUser = null
     }
 
+    var teacherTab by remember { mutableStateOf(TeacherTab.Dashboard) }
+    var studentTab by remember { mutableStateOf(StudentTab.Home) }
+
+    // Hoisted state to avoid duplicate FABs
+    var showAddClassForm by remember { mutableStateOf(false) }
+    var showAddTimetableForm by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -129,28 +140,98 @@ fun AppRoot() {
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
             )
+        },
+        bottomBar = {
+            val user = currentUser
+            if (user != null) {
+                when (user.role) {
+                    com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER -> {
+                        NavigationBar {
+                            NavigationBarItem(
+                                selected = teacherTab == TeacherTab.Dashboard,
+                                onClick = { teacherTab = TeacherTab.Dashboard },
+                                icon = { Icon(Icons.Default.LocationOn, contentDescription = null) },
+                                label = { Text(TeacherTab.Dashboard.title) }
+                            )
+                            NavigationBarItem(
+                                selected = teacherTab == TeacherTab.Timetable,
+                                onClick = { teacherTab = TeacherTab.Timetable },
+                                icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                                label = { Text(TeacherTab.Timetable.title) }
+                            )
+                        }
+                    }
+                    com.shyamavagadia.mpc_project_1.data.UserRole.STUDENT -> {
+                        NavigationBar {
+                            NavigationBarItem(
+                                selected = studentTab == StudentTab.Home,
+                                onClick = { studentTab = StudentTab.Home },
+                                icon = { Icon(Icons.Default.LocationOn, contentDescription = null) },
+                                label = { Text(StudentTab.Home.title) }
+                            )
+                            NavigationBarItem(
+                                selected = studentTab == StudentTab.History,
+                                onClick = { studentTab = StudentTab.History },
+                                icon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                                label = { Text(StudentTab.History.title) }
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        floatingActionButton = {
+            val user = currentUser
+            if (user != null) {
+                when (user.role) {
+                    com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER -> {
+                        FloatingActionButton(onClick = {
+                            if (teacherTab == TeacherTab.Dashboard) {
+                                showAddClassForm = true
+                            } else {
+                                showAddTimetableForm = true
+                            }
+                        }) {
+                            Icon(Icons.Default.Add, contentDescription = "Add")
+                        }
+                    }
+                    else -> {}
+                }
+            }
         }
     ) { inner ->
-        Box(Modifier.padding(inner)) {
-            val user = currentUser
-            if (user == null) {
-                // Simple loading placeholder
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    CircularProgressIndicator()
-                    Spacer(Modifier.height(12.dp))
-                    Text("Loading session...")
-                }
-            } else {
-                when (user.role) {
-                    com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER -> TeacherScreen(currentUser = user, onLogout = onLogout)
-                    com.shyamavagadia.mpc_project_1.data.UserRole.STUDENT -> StudentScreen(currentUser = user, onLogout = onLogout)
-                }
+        val user = currentUser
+        if (user == null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(inner)
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                CircularProgressIndicator()
+                Spacer(Modifier.height(12.dp))
+                Text("Loading session...")
+            }
+        } else {
+            when (user.role) {
+                com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER ->
+                    TeacherScreen(
+                        currentUser = user,
+                        selectedTab = teacherTab,
+                        showAddForm = showAddClassForm,
+                        onShowAddFormChange = { showAddClassForm = it },
+                        showAddTimetable = showAddTimetableForm,
+                        onShowAddTimetableChange = { showAddTimetableForm = it },
+                        modifier = Modifier.padding(inner)
+                    )
+                com.shyamavagadia.mpc_project_1.data.UserRole.STUDENT ->
+                    StudentScreen(
+                        currentUser = user,
+                        selectedTab = studentTab,
+                        modifier = Modifier.padding(inner)
+                    )
             }
         }
     }
@@ -163,7 +244,15 @@ class TeacherViewModel(private val repo: AttendanceRepository, private val teach
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogout: () -> Unit) {
+fun TeacherScreen(
+    currentUser: com.shyamavagadia.mpc_project_1.data.User,
+    selectedTab: TeacherTab,
+    showAddForm: Boolean,
+    onShowAddFormChange: (Boolean) -> Unit,
+    showAddTimetable: Boolean,
+    onShowAddTimetableChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val repo = remember { AttendanceRepository.get(ctx) }
@@ -183,8 +272,7 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
     var start by remember { mutableStateOf<Int?>(null) }
     var end by remember { mutableStateOf<Int?>(null) }
     var isCapturing by remember { mutableStateOf(false) }
-    var showAddForm by remember { mutableStateOf(false) }
-    var showAddTimetable by remember { mutableStateOf(false) }
+    // State is hoisted to AppRoot to control via single FAB and avoid duplicates
     var subject by remember { mutableStateOf("") }
     var selectedClassId by remember { mutableStateOf<Long?>(null) }
     var selectedDay by remember { mutableStateOf(2) } // default Monday (Calendar.MONDAY = 2)
@@ -214,64 +302,44 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                modifier = Modifier.height(56.dp),
-                title = { Text("Teacher Dashboard", style = MaterialTheme.typography.titleMedium) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            )
-        },
-        floatingActionButton = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                FloatingActionButton(onClick = { showAddTimetable = true }) {
-                    Icon(Icons.Default.Add, contentDescription = "Add Timetable Entry")
-                }
-                Spacer(Modifier.height(8.dp))
-                FloatingActionButton(onClick = { showAddForm = true }) {
-                    Icon(Icons.Default.Add, contentDescription = "Add Class")
-                }
-            }
-        }
-    ) { padding ->
-        LazyColumn(
+    LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .then(modifier)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Header
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+            // Header (only for Dashboard tab)
+            if (selectedTab == TeacherTab.Dashboard) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                     ) {
-                        Icon(
-                            Icons.Default.Add,
-                            contentDescription = null,
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "Class Management",
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Text(
-                            "${classes.size} classes configured",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp),
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Class Management",
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                "${classes.size} classes configured",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            )
+                        }
                     }
                 }
             }
@@ -297,7 +365,7 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Bold
                                 )
-                                IconButton(onClick = { showAddForm = false }) {
+                                IconButton(onClick = { onShowAddFormChange(false) }) {
                                     Icon(Icons.Default.Close, contentDescription = "Close")
                                 }
                             }
@@ -426,7 +494,7 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                                                 )
                                             )
                                             // No time window saved now
-                                            name = ""; capturedLocation = null; radius = "40"; start = null; end = null; showAddForm = false
+                                            name = ""; capturedLocation = null; radius = "40"; start = null; end = null; onShowAddFormChange(false)
                                         }
                                     }
                                 },
@@ -457,7 +525,7 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text("Add Timetable Entry", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                IconButton(onClick = { showAddTimetable = false }) { Icon(Icons.Default.Close, contentDescription = "Close") }
+                                IconButton(onClick = { onShowAddTimetableChange(false) }) { Icon(Icons.Default.Close, contentDescription = "Close") }
                             }
 
                             OutlinedTextField(
@@ -518,7 +586,7 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                                                     endMinutesOfDay = e
                                                 )
                                             )
-                                            subject = ""; selectedClassId = null; ttStart = null; ttEnd = null; showAddTimetable = false
+                                            subject = ""; selectedClassId = null; ttStart = null; ttEnd = null; onShowAddTimetableChange(false)
                                         }
                                     }
                                 },
@@ -530,8 +598,8 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                 }
             }
 
-            // Classes List
-            if (classes.isNotEmpty()) {
+            // Classes List (Dashboard tab)
+            if (selectedTab == TeacherTab.Dashboard && classes.isNotEmpty()) {
                 item {
                     Text(
                         "Saved Classes",
@@ -586,7 +654,7 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                         }
                     }
                 }
-            } else {
+            } else if (selectedTab == TeacherTab.Dashboard) {
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -618,8 +686,8 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                 }
             }
 
-            // Timetable list
-            if (timetable.isNotEmpty()) {
+            // Timetable list (Timetable tab)
+            if (selectedTab == TeacherTab.Timetable && timetable.isNotEmpty()) {
                 item { Spacer(Modifier.height(8.dp)) }
                 item { Text("Timetable", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
                 items(timetable) { entry ->
@@ -664,25 +732,28 @@ fun TeacherScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                         }
                     }
                 }
-            } else {
+            } else if (selectedTab == TeacherTab.Timetable) {
                 item { Spacer(Modifier.height(8.dp)) }
                 item {
                     Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                         Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("No timetable entries yet")
                             Spacer(Modifier.height(4.dp))
-                            OutlinedButton(onClick = { showAddTimetable = true }) { Text("Add timetable entry") }
+                            OutlinedButton(onClick = { onShowAddTimetableChange(true) }) { Text("Add timetable entry") }
                         }
                     }
                 }
             }
         }
-    }
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
-fun StudentScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogout: () -> Unit) {
+fun StudentScreen(
+    currentUser: com.shyamavagadia.mpc_project_1.data.User,
+    selectedTab: StudentTab,
+    modifier: Modifier = Modifier,
+) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val repo = remember { AttendanceRepository.get(ctx) }
@@ -777,53 +848,44 @@ fun StudentScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                modifier = Modifier.height(56.dp),
-                title = { Text("Student Check-in", style = MaterialTheme.typography.titleMedium) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            )
-        }
-    ) { padding ->
-        LazyColumn(
+    LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .then(modifier)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Header
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+            // Header only on Home tab
+            if (selectedTab == StudentTab.Home) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                     ) {
-                        Icon(
-                            Icons.Default.LocationOn,
-                            contentDescription = null,
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "Attendance Check-in",
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Text(
-                            "Check in when you're in class",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                Icons.Default.LocationOn,
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp),
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                "Attendance Check-in",
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                "Check in when you're in class",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            )
+                        }
                     }
                 }
             }
@@ -978,7 +1040,7 @@ fun StudentScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
             }
 
             // Check-in button
-            item {
+            if (selectedTab == StudentTab.Home) item {
                 Button(
                     onClick = {
                         if (canCheckIn && currentLocation != null && nearestClass != null) {
@@ -1004,8 +1066,8 @@ fun StudentScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
                 }
             }
 
-            // Attendance history
-            if (attendance.isNotEmpty()) {
+            // Attendance history (History tab)
+            if (selectedTab == StudentTab.History && attendance.isNotEmpty()) {
                 item {
                     Text(
                         "Recent Check-ins",
@@ -1080,6 +1142,4 @@ fun StudentScreen(currentUser: com.shyamavagadia.mpc_project_1.data.User, onLogo
             }
         }
     }
-}
-
 
