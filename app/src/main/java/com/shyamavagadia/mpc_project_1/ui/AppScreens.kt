@@ -78,40 +78,81 @@ import com.shyamavagadia.mpc_project_1.data.SessionManager
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun AppRoot() {
-    var role by remember { mutableStateOf(Role.Teacher) }
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val repo = remember { AttendanceRepository.get(ctx) }
+    val session = remember { SessionManager(ctx) }
+
+    var currentUser by remember { mutableStateOf<com.shyamavagadia.mpc_project_1.data.User?>(null) }
+
+    LaunchedEffect(Unit) {
+        // Try to restore session
+        val existingId = session.getLoggedInUserId()
+        if (existingId != null) {
+            currentUser = repo.getUserById(existingId)
+        } else {
+            // Ensure sample data exists and login default teacher for demo
+            repo.createSampleData()
+            val teacher = repo.getUserByUsername("teacher")
+            if (teacher != null) {
+                session.setLoggedInUserId(teacher.id)
+                currentUser = teacher
+            } else {
+                // fallback: try student
+                val student = repo.getUserByUsername("student")
+                if (student != null) {
+                    session.setLoggedInUserId(student.id)
+                    currentUser = student
+                }
+            }
+        }
+    }
+
+    val onLogout: () -> Unit = {
+        session.clear()
+        currentUser = null
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 modifier = Modifier.height(56.dp),
-                title = { Text("Attendance - ${role.name}", style = MaterialTheme.typography.titleMedium) },
+                title = {
+                    val title = when (currentUser?.role) {
+                        com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER -> "Attendance - Teacher"
+                        com.shyamavagadia.mpc_project_1.data.UserRole.STUDENT -> "Attendance - Student"
+                        else -> "Attendance"
+                    }
+                    Text(title, style = MaterialTheme.typography.titleMedium)
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 )
             )
-        },
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = role == Role.Teacher,
-                    onClick = { role = Role.Teacher },
-                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    label = { Text("Teacher") }
-                )
-                NavigationBarItem(
-                    selected = role == Role.Student,
-                    onClick = { role = Role.Student },
-                    icon = { Icon(Icons.Default.LocationOn, contentDescription = null) },
-                    label = { Text("Student") }
-                )
-            }
         }
     ) { inner ->
         Box(Modifier.padding(inner)) {
-            when (role) {
-                Role.Teacher -> TeacherScreen()
-                Role.Student -> StudentScreen()
+            val user = currentUser
+            if (user == null) {
+                // Simple loading placeholder
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(12.dp))
+                    Text("Loading session...")
+                }
+            } else {
+                when (user.role) {
+                    com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER -> TeacherScreen(currentUser = user, onLogout = onLogout)
+                    com.shyamavagadia.mpc_project_1.data.UserRole.STUDENT -> StudentScreen(currentUser = user, onLogout = onLogout)
+                }
             }
-            }
+        }
     }
 }
 
