@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -38,10 +39,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.NavigationBar
@@ -49,11 +50,11 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -73,10 +74,12 @@ import com.shyamavagadia.mpc_project_1.data.TimeWindow
 import com.shyamavagadia.mpc_project_1.data.TimetableEntry
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
-import com.shyamavagadia.mpc_project_1.data.SessionManager
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+
 
 // Bottom navigation tabs (top-level to avoid scoping issues)
-enum class TeacherTab(val title: String) { Dashboard("Dashboard"), Timetable("Timetable") }
+enum class TeacherTab(val title: String) { Dashboard("Dashboard"), Timetable("Timetable"), Manage("Manage") }
 enum class StudentTab(val title: String) { Home("Home"), History("History") }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -85,35 +88,36 @@ fun AppRoot() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val repo = remember { AttendanceRepository.get(ctx) }
-    val session = remember { SessionManager(ctx) }
+    val firebaseAuth = remember<FirebaseAuth> { FirebaseAuth.getInstance() }
+    val firestore = remember<FirebaseFirestore> { FirebaseFirestore.getInstance() }
 
     var currentUser by remember { mutableStateOf<com.shyamavagadia.mpc_project_1.data.User?>(null) }
+    var showProfile by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        // Try to restore session
-        val existingId = session.getLoggedInUserId()
-        if (existingId != null) {
-            currentUser = repo.getUserById(existingId)
-        } else {
-            // Ensure sample data exists and login default teacher for demo
-            repo.createSampleData()
-            val teacher = repo.getUserByUsername("teacher")
-            if (teacher != null) {
-                session.setLoggedInUserId(teacher.id)
-                currentUser = teacher
-            } else {
-                // fallback: try student
-                val student = repo.getUserByUsername("student")
-                if (student != null) {
-                    session.setLoggedInUserId(student.id)
-                    currentUser = student
+        // Restore Firebase session if available
+        val fbUser = firebaseAuth.currentUser
+        if (fbUser != null) {
+            try {
+                val doc = firestore.collection("users").document(fbUser.uid).get().await()
+                if (doc.exists()) {
+                    val roleStr = (doc.getString("role") ?: "STUDENT").uppercase()
+                    val role = if (roleStr == "TEACHER") com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER else com.shyamavagadia.mpc_project_1.data.UserRole.STUDENT
+                    currentUser = com.shyamavagadia.mpc_project_1.data.User(
+                        id = 0L,
+                        username = doc.getString("username") ?: "",
+                        password = "",
+                        role = role,
+                        name = doc.getString("name") ?: (fbUser.displayName ?: ""),
+                        email = fbUser.email ?: ""
+                    )
                 }
-            }
+            } catch (_: Exception) { /* ignore */ }
         }
     }
 
     val onLogout: () -> Unit = {
-        session.clear()
+        firebaseAuth.signOut()
         currentUser = null
     }
 
@@ -124,21 +128,34 @@ fun AppRoot() {
     var showAddClassForm by remember { mutableStateOf(false) }
     var showAddTimetableForm by remember { mutableStateOf(false) }
 
+    if (currentUser == null) {
+        AuthScreen(onAuthSuccess = { user ->
+            // After Firebase login/signup, we receive mapped User with role
+            currentUser = user
+        })
+        return
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                modifier = Modifier.height(56.dp),
+                modifier = Modifier.height(72.dp),
                 title = {
                     val title = when (currentUser?.role) {
                         com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER -> "Attendance - Teacher"
                         com.shyamavagadia.mpc_project_1.data.UserRole.STUDENT -> "Attendance - Student"
                         else -> "Attendance"
                     }
-                    Text(title, style = MaterialTheme.typography.titleMedium)
+                    Text(title, style = MaterialTheme.typography.titleLarge)
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
+                ),
+                actions = {
+                    IconButton(onClick = { showProfile = true }) {
+                        Icon(Icons.Filled.AccountCircle, contentDescription = "Profile")
+                    }
+                }
             )
         },
         bottomBar = {
@@ -149,15 +166,33 @@ fun AppRoot() {
                         NavigationBar {
                             NavigationBarItem(
                                 selected = teacherTab == TeacherTab.Dashboard,
-                                onClick = { teacherTab = TeacherTab.Dashboard },
+                                onClick = { 
+                                    teacherTab = TeacherTab.Dashboard
+                                    showAddTimetableForm = false
+                                    showAddClassForm = false
+                                },
                                 icon = { Icon(Icons.Default.LocationOn, contentDescription = null) },
                                 label = { Text(TeacherTab.Dashboard.title) }
                             )
                             NavigationBarItem(
                                 selected = teacherTab == TeacherTab.Timetable,
-                                onClick = { teacherTab = TeacherTab.Timetable },
+                                onClick = { 
+                                    teacherTab = TeacherTab.Timetable
+                                    showAddTimetableForm = false
+                                    showAddClassForm = false
+                                },
                                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
                                 label = { Text(TeacherTab.Timetable.title) }
+                            )
+                            NavigationBarItem(
+                                selected = teacherTab == TeacherTab.Manage,
+                                onClick = { 
+                                    teacherTab = TeacherTab.Manage
+                                    showAddTimetableForm = false
+                                    showAddClassForm = false
+                                },
+                                icon = { Icon(Icons.Default.AccountCircle, contentDescription = null) },
+                                label = { Text(TeacherTab.Manage.title) }
                             )
                         }
                     }
@@ -185,14 +220,16 @@ fun AppRoot() {
             if (user != null) {
                 when (user.role) {
                     com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER -> {
-                        FloatingActionButton(onClick = {
-                            if (teacherTab == TeacherTab.Dashboard) {
-                                showAddClassForm = true
-                            } else {
-                                showAddTimetableForm = true
+                        if (teacherTab == TeacherTab.Dashboard || teacherTab == TeacherTab.Timetable) {
+                            FloatingActionButton(onClick = {
+                                if (teacherTab == TeacherTab.Dashboard) {
+                                    showAddClassForm = true
+                                } else if (teacherTab == TeacherTab.Timetable) {
+                                    showAddTimetableForm = true
+                                }
+                            }) {
+                                Icon(Icons.Default.Add, contentDescription = "Add")
                             }
-                        }) {
-                            Icon(Icons.Default.Add, contentDescription = "Add")
                         }
                     }
                     else -> {}
@@ -215,17 +252,29 @@ fun AppRoot() {
                 Text("Loading session...")
             }
         } else {
+            if (showProfile) {
+                ProfileScreen(
+                    onBack = { showProfile = false },
+                    onLogout = onLogout
+                )
+                return@Scaffold
+            }
             when (user.role) {
-                com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER ->
-                    TeacherScreen(
-                        currentUser = user,
-                        selectedTab = teacherTab,
-                        showAddForm = showAddClassForm,
-                        onShowAddFormChange = { showAddClassForm = it },
-                        showAddTimetable = showAddTimetableForm,
-                        onShowAddTimetableChange = { showAddTimetableForm = it },
-                        modifier = Modifier.padding(inner)
-                    )
+                com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER -> {
+                    if (teacherTab == TeacherTab.Manage) {
+                        ManageClassesScreen(modifier = Modifier.padding(inner))
+                    } else {
+                        TeacherScreen(
+                            currentUser = user,
+                            selectedTab = teacherTab,
+                            showAddForm = showAddClassForm,
+                            onShowAddFormChange = { showAddClassForm = it },
+                            showAddTimetable = showAddTimetableForm,
+                            onShowAddTimetableChange = { showAddTimetableForm = it },
+                            modifier = Modifier.padding(inner)
+                        )
+                    }
+                }
                 com.shyamavagadia.mpc_project_1.data.UserRole.STUDENT ->
                     StudentScreen(
                         currentUser = user,
@@ -278,6 +327,28 @@ fun TeacherScreen(
     var selectedDay by remember { mutableStateOf(2) } // default Monday (Calendar.MONDAY = 2)
     var ttStart by remember { mutableStateOf<Int?>(null) }
     var ttEnd by remember { mutableStateOf<Int?>(null) }
+    var allowedEmailsCsv by remember { mutableStateOf("") }
+    var allowedEnrollsCsv by remember { mutableStateOf("") }
+
+    // Firestore classes created by this teacher (for associating with class location)
+    val teacherUid = remember { FirebaseAuth.getInstance().currentUser?.uid }
+    var fsClasses by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) } // (docId to name)
+    var selectedFsClassId by remember { mutableStateOf<String?>(null) }
+    var subjectForClass by remember { mutableStateOf("") }
+    var lectureType by remember { mutableStateOf("Theory") } // or "Lab"
+
+    LaunchedEffect(teacherUid) {
+        if (teacherUid != null) {
+            try {
+                val snap = FirebaseFirestore.getInstance().collection("classes")
+                    .whereEqualTo("teacherUid", teacherUid)
+                    .get().await()
+                fsClasses = snap.documents.map { it.id to (it.getString("name") ?: "Class") }
+            } catch (_: Exception) {
+                fsClasses = emptyList()
+            }
+        }
+    }
 
     val locationClient = remember { LocationServices.getFusedLocationProviderClient(ctx) }
     
@@ -377,6 +448,49 @@ fun TeacherScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 leadingIcon = { Icon(Icons.Default.Add, contentDescription = null) }
                             )
+
+                            // Associate with created class (Manage tab)
+                            Column {
+                                Text("Select Managed Class (optional)")
+                                Spacer(Modifier.height(8.dp))
+                                if (fsClasses.isEmpty()) {
+                                    Text(
+                                        "No classes created yet",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                } else {
+                                    fsClasses.forEach { (id, nm) ->
+                                        OutlinedButton(
+                                            onClick = { selectedFsClassId = id },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = ButtonDefaults.outlinedButtonColors(
+                                                containerColor = if (selectedFsClassId == id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                                            )
+                                        ) { Text(nm) }
+                                    }
+                                }
+                            }
+
+                            // Subject and lecture type
+                            OutlinedTextField(
+                                value = subjectForClass,
+                                onValueChange = { subjectForClass = it },
+                                label = { Text("Subject Name") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { lectureType = "Theory" }, modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        containerColor = if (lectureType == "Theory") MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                                    )
+                                ) { Text("Theory") }
+                                OutlinedButton(onClick = { lectureType = "Lab" }, modifier = Modifier.weight(1f),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        containerColor = if (lectureType == "Lab") MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                                    )
+                                ) { Text("Lab") }
+                            }
 
                             // Location capture section
                             Card(
@@ -493,8 +607,26 @@ fun TeacherScreen(
                                                     teacherId = currentUser.id
                                                 )
                                             )
-                                            // No time window saved now
-                                            name = ""; capturedLocation = null; radius = "40"; start = null; end = null; onShowAddFormChange(false)
+                                            // Also store to Firestore for student visibility
+                                            try {
+                                                val fs = FirebaseFirestore.getInstance()
+                                                val data = mapOf(
+                                                    "classLocationId" to id,
+                                                    "managedClassId" to selectedFsClassId,
+                                                    "name" to name.trim(),
+                                                    "subject" to subjectForClass.trim(),
+                                                    "lectureType" to lectureType,
+                                                    "latitude" to capturedLocation!!.latitude,
+                                                    "longitude" to capturedLocation!!.longitude,
+                                                    "accuracy" to capturedLocation!!.accuracy,
+                                                    "radiusMeters" to radI,
+                                                    "teacherUid" to (teacherUid ?: ""),
+                                                    "createdAt" to com.google.firebase.Timestamp.now()
+                                                )
+                                                fs.collection("class_locations").add(data)
+                                            } catch (_: Exception) {}
+                                            // Reset
+                                            name = ""; subjectForClass = ""; lectureType = "Theory"; selectedFsClassId = null; capturedLocation = null; radius = "40"; start = null; end = null; onShowAddFormChange(false)
                                         }
                                     }
                                 },
@@ -569,6 +701,20 @@ fun TeacherScreen(
                                 }, modifier = Modifier.weight(1f)) { Text("End" + (ttEnd?.let { " (${it/60}:${"%02d".format(it%60)})" } ?: "")) }
                             }
 
+                            // Membership fields
+                            OutlinedTextField(
+                                value = allowedEmailsCsv,
+                                onValueChange = { allowedEmailsCsv = it },
+                                label = { Text("Allowed Emails (comma-separated)") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = allowedEnrollsCsv,
+                                onValueChange = { allowedEnrollsCsv = it },
+                                label = { Text("Allowed Enroll Numbers (comma-separated)") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
                             Button(
                                 onClick = {
                                     val clsId = selectedClassId
@@ -576,7 +722,7 @@ fun TeacherScreen(
                                     val e = ttEnd
                                     if (subject.isNotBlank() && clsId != null && s != null && e != null) {
                                         scope.launch {
-                                            repo.upsertTimetableEntry(
+                                            val entryId = repo.upsertTimetableEntry(
                                                 TimetableEntry(
                                                     teacherId = currentUser.id,
                                                     classLocationId = clsId,
@@ -586,7 +732,19 @@ fun TeacherScreen(
                                                     endMinutesOfDay = e
                                                 )
                                             )
-                                            subject = ""; selectedClassId = null; ttStart = null; ttEnd = null; onShowAddTimetableChange(false)
+                                            // Save membership to Firestore
+                                            try {
+                                                val emails = allowedEmailsCsv.split(',').mapNotNull { it.trim().lowercase().ifBlank { null } }
+                                                val enrolls = allowedEnrollsCsv.split(',').mapNotNull { it.trim().uppercase().ifBlank { null } }
+                                                val fs = FirebaseFirestore.getInstance()
+                                                fs.collection("timetable_members").document(entryId.toString()).set(
+                                                    mapOf(
+                                                        "emails" to emails,
+                                                        "enrolls" to enrolls
+                                                    )
+                                                )
+                                            } catch (_: Exception) {}
+                                            subject = ""; selectedClassId = null; ttStart = null; ttEnd = null; allowedEmailsCsv = ""; allowedEnrollsCsv = ""; onShowAddTimetableChange(false)
                                         }
                                     }
                                 },
@@ -759,13 +917,16 @@ fun StudentScreen(
     val repo = remember { AttendanceRepository.get(ctx) }
     val classes by repo.observeClasses().collectAsState(initial = emptyList())
     val attendance by repo.observeAttendanceByStudent(currentUser.id).collectAsState(initial = emptyList())
+    val today = remember { java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) }
+    val todaysEntries by repo.observeTimetableForDay(today).collectAsState(initial = emptyList())
 
     var currentLocation by remember { mutableStateOf<Location?>(null) }
     var isLocationEnabled by remember { mutableStateOf(false) }
-    var nearestClass by remember { mutableStateOf<ClassLocation?>(null) }
-    var distanceToNearest by remember { mutableStateOf<Float?>(null) }
     var canCheckIn by remember { mutableStateOf(false) }
     var checkInMessage by remember { mutableStateOf("") }
+    var selectedEntryId by remember { mutableStateOf<Long?>(null) }
+    var selectedClass by remember { mutableStateOf<ClassLocation?>(null) }
+    var membership by remember { mutableStateOf<Map<Long, Pair<List<String>, List<String>>>>(emptyMap()) }
 
     // Persisted location enabled preference
     val prefs = remember { ctx.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
@@ -809,43 +970,19 @@ fun StudentScreen(
         }
     }
 
-    // Calculate nearest class and check-in eligibility
-    LaunchedEffect(currentLocation, classes) {
-        if (currentLocation != null && classes.isNotEmpty()) {
-            var minDistance = Float.MAX_VALUE
-            var nearest: ClassLocation? = null
-            
-            for (classLocation in classes) {
-                val distance = FloatArray(1)
-                Location.distanceBetween(
-                    currentLocation!!.latitude, currentLocation!!.longitude,
-                    classLocation.latitude, classLocation.longitude,
-                    distance
-                )
-                
-                if (distance[0] < minDistance) {
-                    minDistance = distance[0]
-                    nearest = classLocation
-                }
-            }
-            
-            nearestClass = nearest
-            distanceToNearest = minDistance
-            
-            // Check if can check in (within radius and time window)
-            if (nearest != null) {
-                val now = java.util.Calendar.getInstance()
-                val currentMinutes = now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE)
-                
-                // For now, just check distance. Time window check will be added when we implement TimeWindow queries
-                canCheckIn = minDistance <= nearest.radiusMeters && currentLocation!!.accuracy <= 30
-                checkInMessage = when {
-                    minDistance > nearest.radiusMeters -> "Too far from ${nearest.name} (${String.format("%.0f", minDistance)}m away)"
-                    currentLocation!!.accuracy > 30 -> "GPS accuracy too low (${String.format("%.0f", currentLocation!!.accuracy)}m)"
-                    else -> "✅ Can check in to ${nearest.name}"
-                }
-            }
+    // Load membership for today's entries from Firestore
+    LaunchedEffect(todaysEntries) {
+        val fs = FirebaseFirestore.getInstance()
+        val map = mutableMapOf<Long, Pair<List<String>, List<String>>>()
+        todaysEntries.forEach { e ->
+            try {
+                val snap = fs.collection("timetable_members").document(e.id.toString()).get().await()
+                val emails = (snap.get("emails") as? List<*>)?.mapNotNull { it?.toString()?.lowercase() } ?: emptyList()
+                val enrolls = (snap.get("enrolls") as? List<*>)?.mapNotNull { it?.toString()?.uppercase() } ?: emptyList()
+                map[e.id] = emails to enrolls
+            } catch (_: Exception) {}
         }
+        membership = map
     }
 
     LazyColumn(
@@ -970,8 +1107,6 @@ fun StudentScreen(
                                                 isLocationEnabled = false
                                                 prefs.edit().putBoolean("location_enabled", false).apply()
                                                 currentLocation = null
-                                                nearestClass = null
-                                                distanceToNearest = null
                                                 canCheckIn = false
                                                 checkInMessage = ""
                                             },
@@ -994,78 +1129,6 @@ fun StudentScreen(
                     }
                 }
             }
-
-            // Nearest class info
-            if (nearestClass != null && distanceToNearest != null) {
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(20.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(Icons.Default.LocationOn, contentDescription = null)
-                                Text("Nearest class", fontWeight = FontWeight.Medium)
-                            }
-
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                            ) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                    Text(
-                                        nearestClass!!.name,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text("Distance: ${String.format("%.0f", distanceToNearest!!)}m")
-                                    Text("Required: ≤${nearestClass!!.radiusMeters}m")
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        checkInMessage,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = if (canCheckIn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Check-in button
-            if (selectedTab == StudentTab.Home) item {
-                Button(
-                    onClick = {
-                        if (canCheckIn && currentLocation != null && nearestClass != null) {
-                            scope.launch {
-                                repo.insertAttendance(
-                                    com.shyamavagadia.mpc_project_1.data.Attendance(
-                                        classLocationId = nearestClass!!.id,
-                                        studentId = currentUser.id,
-                                        timestamp = System.currentTimeMillis(),
-                                        latitude = currentLocation!!.latitude,
-                                        longitude = currentLocation!!.longitude,
-                                        accuracyMeters = currentLocation!!.accuracy,
-                                        isMock = false // We'll add mock detection later
-                                    )
-                                )
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = canCheckIn
-                ) {
-                    Text("Check in")
-                }
-            }
-
             // Attendance history (History tab)
             if (selectedTab == StudentTab.History && attendance.isNotEmpty()) {
                 item {

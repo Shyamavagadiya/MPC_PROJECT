@@ -23,24 +23,21 @@ import com.shyamavagadia.mpc_project_1.data.AttendanceRepository
 import com.shyamavagadia.mpc_project_1.data.User
 import com.shyamavagadia.mpc_project_1.data.UserRole
 import kotlinx.coroutines.launch
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.tasks.await
 
 enum class AuthMode { LOGIN, SIGNUP }
 
 class AuthViewModel(private val repo: AttendanceRepository) : ViewModel() {
-    suspend fun login(username: String, password: String): User? = 
-        repo.authenticateUser(username, password)
-    
-    suspend fun signup(user: User): Long = repo.registerUser(user)
-    
-    suspend fun checkUsernameExists(username: String): Boolean = 
-        repo.getUserByUsername(username) != null
+    // Local repo methods retained for sample data, but primary auth is via Firebase
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AuthScreen(onAuthSuccess: (User) -> Unit) {
     var authMode by remember { mutableStateOf(AuthMode.LOGIN) }
-    var username by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") } // For signup/display only
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
@@ -59,6 +56,8 @@ fun AuthScreen(onAuthSuccess: (User) -> Unit) {
             return AuthViewModel(repo) as T
         }
     })
+    val firebaseAuth = remember { FirebaseAuth.getInstance() }
+    val firestore = remember { FirebaseFirestore.getInstance() }
 
     Scaffold(
         topBar = {
@@ -112,13 +111,14 @@ fun AuthScreen(onAuthSuccess: (User) -> Unit) {
                     modifier = Modifier.padding(24.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // Username field
+                    // Email field (used for Firebase auth)
                     OutlinedTextField(
-                        value = username,
-                        onValueChange = { username = it },
-                        label = { Text("Username") },
-                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                        modifier = Modifier.fillMaxWidth()
+                        value = email,
+                        onValueChange = { email = it },
+                        label = { Text("Email") },
+                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next)
                     )
 
                     // Password field
@@ -138,6 +138,15 @@ fun AuthScreen(onAuthSuccess: (User) -> Unit) {
 
                     // Signup specific fields
                     if (authMode == AuthMode.SIGNUP) {
+                        // Username (optional, stored in Firestore)
+                        OutlinedTextField(
+                            value = username,
+                            onValueChange = { username = it },
+                            label = { Text("Username") },
+                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
                         OutlinedTextField(
                             value = confirmPassword,
                             onValueChange = { confirmPassword = it },
@@ -153,29 +162,30 @@ fun AuthScreen(onAuthSuccess: (User) -> Unit) {
                             modifier = Modifier.fillMaxWidth()
                         )
 
-                        OutlinedTextField(
-                            value = email,
-                            onValueChange = { email = it },
-                            label = { Text("Email") },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        // Role selection
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = { selectedRole = UserRole.TEACHER },
-                                modifier = Modifier.weight(1f)
+                        // Role selection (single choice)
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text("Role", style = MaterialTheme.typography.labelLarge)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Teacher")
-                            }
-                            OutlinedButton(
-                                onClick = { selectedRole = UserRole.STUDENT },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("Student")
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(
+                                        selected = selectedRole == UserRole.TEACHER,
+                                        onClick = { selectedRole = UserRole.TEACHER },
+                                        enabled = !isLoading
+                                    )
+                                    Text("Teacher")
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(
+                                        selected = selectedRole == UserRole.STUDENT,
+                                        onClick = { selectedRole = UserRole.STUDENT },
+                                        enabled = !isLoading
+                                    )
+                                    Text("Student")
+                                }
                             }
                         }
                     }
@@ -198,32 +208,65 @@ fun AuthScreen(onAuthSuccess: (User) -> Unit) {
                                 
                                 try {
                                     if (authMode == AuthMode.LOGIN) {
-                                        val user = vm.login(username, password)
-                                        if (user != null) {
-                                            onAuthSuccess(user)
+                                        if (email.isBlank() || password.isBlank()) {
+                                            errorMessage = "Email and password are required"
                                         } else {
-                                            errorMessage = "Invalid username or password"
+                                            val result = firebaseAuth.signInWithEmailAndPassword(email.trim(), password).await()
+                                            val uid = result.user?.uid ?: throw IllegalStateException("No user ID")
+                                            val doc = firestore.collection("users").document(uid).get().await()
+                                            if (!doc.exists()) throw IllegalStateException("User profile not found")
+                                            val roleStr = (doc.getString("role") ?: "STUDENT").uppercase()
+                                            val role = if (roleStr == "TEACHER") UserRole.TEACHER else UserRole.STUDENT
+                                            val displayName = doc.getString("name") ?: name
+                                            val uname = doc.getString("username") ?: username
+                                            onAuthSuccess(
+                                                User(
+                                                    id = 0L,
+                                                    username = uname,
+                                                    password = "",
+                                                    role = role,
+                                                    name = displayName,
+                                                    email = email.trim()
+                                                )
+                                            )
                                         }
                                     } else {
                                         if (password != confirmPassword) {
                                             errorMessage = "Passwords do not match"
+                                            isLoading = false
                                             return@launch
                                         }
-                                        
-                                        val user = User(
-                                            username = username,
-                                            password = password,
-                                            role = selectedRole,
-                                            name = name,
-                                            email = email
-                                        )
-                                        
-                                        val userId = vm.signup(user)
-                                        if (userId > 0) {
-                                            onAuthSuccess(user.copy(id = userId))
-                                        } else {
-                                            errorMessage = "Failed to create account"
+                                        if (email.isBlank()) {
+                                            errorMessage = "Email is required"
+                                            isLoading = false
+                                            return@launch
                                         }
+                                        val result = firebaseAuth.createUserWithEmailAndPassword(email.trim(), password).await()
+                                        val uid = result.user?.uid ?: throw IllegalStateException("No user ID")
+                                        val data = mapOf(
+                                            "email" to email.trim(),
+                                            "name" to name,
+                                            "username" to username,
+                                            "role" to selectedRole.name,
+                                            "createdAt" to com.google.firebase.Timestamp.now()
+                                        )
+                                        firestore.collection("users").document(uid).set(data).await()
+                                        // Verify profile saved
+                                        val saved = firestore.collection("users").document(uid).get().await()
+                                        if (!saved.exists()) {
+                                            throw IllegalStateException("Failed to save profile")
+                                        }
+                                        // Directly proceed to app
+                                        onAuthSuccess(
+                                            User(
+                                                id = 0L,
+                                                username = username,
+                                                password = "",
+                                                role = selectedRole,
+                                                name = name,
+                                                email = email.trim()
+                                            )
+                                        )
                                     }
                                 } catch (e: Exception) {
                                     errorMessage = "An error occurred: ${e.message}"

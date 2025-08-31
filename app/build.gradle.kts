@@ -3,7 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.kapt)
-    
+    alias(libs.plugins.google.services)
 }
 
 android {
@@ -64,10 +64,10 @@ dependencies {
     implementation(libs.play.services.tasks)
     // Coroutines Play Services
     implementation(libs.kotlinx.coroutines.play.services)
-    // Firebase (BOM + Auth + Firestore) - temporarily disabled
-    // implementation(platform(libs.firebase.bom))
-    // implementation(libs.firebase.auth)
-    // implementation(libs.firebase.firestore)
+    // Firebase (BOM + Auth + Firestore)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth)
+    implementation(libs.firebase.firestore)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -77,4 +77,4 @@ dependencies {
     debugImplementation(libs.androidx.ui.test.manifest)
 }
 
-// apply(plugin = "com.google.gms.google-services") // temporarily disabled
+apply(plugin = "com.google.gms.google-services")
