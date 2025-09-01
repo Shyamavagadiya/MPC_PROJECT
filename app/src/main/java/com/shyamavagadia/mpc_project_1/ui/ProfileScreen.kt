@@ -154,6 +154,18 @@ fun ProfileScreen(
 
             Divider()
 
+            // Logout button (before attendance summary)
+            Button(
+                onClick = onLogout,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Logout")
+            }
+
             // Simple attendance summary using today's check-ins
             val dayName = when (Calendar.getInstance().get(Calendar.DAY_OF_WEEK)) {
                 Calendar.MONDAY -> "Monday"
@@ -170,20 +182,6 @@ fun ProfileScreen(
 
             if (loading) {
                 CircularProgressIndicator()
-            }
-
-            // Push logout to bottom
-            Spacer(modifier = Modifier.weight(1f))
-
-            Button(
-                onClick = onLogout,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error,
-                    contentColor = MaterialTheme.colorScheme.onError
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Logout")
             }
         }
     }

@@ -26,6 +26,10 @@ import kotlinx.coroutines.launch
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
+import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
+import com.google.firebase.auth.FirebaseAuthInvalidUserException
+import com.google.firebase.auth.FirebaseAuthUserCollisionException
+import com.google.firebase.auth.FirebaseAuthWeakPasswordException
 
 enum class AuthMode { LOGIN, SIGNUP }
 
@@ -213,11 +217,22 @@ fun AuthScreen(onAuthSuccess: (User) -> Unit) {
                                         } else {
                                             val result = firebaseAuth.signInWithEmailAndPassword(email.trim(), password).await()
                                             val uid = result.user?.uid ?: throw IllegalStateException("No user ID")
-                                            val doc = firestore.collection("users").document(uid).get().await()
-                                            if (!doc.exists()) throw IllegalStateException("User profile not found")
+                                            var doc = firestore.collection("users").document(uid).get().await()
+                                            if (!doc.exists()) {
+                                                // Create minimal profile with default STUDENT role
+                                                val data = mapOf(
+                                                    "email" to (result.user?.email ?: email.trim()),
+                                                    "name" to (result.user?.displayName ?: name),
+                                                    "username" to username,
+                                                    "role" to UserRole.STUDENT.name,
+                                                    "createdAt" to com.google.firebase.Timestamp.now()
+                                                )
+                                                firestore.collection("users").document(uid).set(data).await()
+                                                doc = firestore.collection("users").document(uid).get().await()
+                                            }
                                             val roleStr = (doc.getString("role") ?: "STUDENT").uppercase()
                                             val role = if (roleStr == "TEACHER") UserRole.TEACHER else UserRole.STUDENT
-                                            val displayName = doc.getString("name") ?: name
+                                            val displayName = doc.getString("name") ?: (result.user?.displayName ?: name)
                                             val uname = doc.getString("username") ?: username
                                             onAuthSuccess(
                                                 User(
@@ -243,20 +258,17 @@ fun AuthScreen(onAuthSuccess: (User) -> Unit) {
                                         }
                                         val result = firebaseAuth.createUserWithEmailAndPassword(email.trim(), password).await()
                                         val uid = result.user?.uid ?: throw IllegalStateException("No user ID")
-                                        val data = mapOf(
-                                            "email" to email.trim(),
-                                            "name" to name,
-                                            "username" to username,
-                                            "role" to selectedRole.name,
-                                            "createdAt" to com.google.firebase.Timestamp.now()
-                                        )
-                                        firestore.collection("users").document(uid).set(data).await()
-                                        // Verify profile saved
-                                        val saved = firestore.collection("users").document(uid).get().await()
-                                        if (!saved.exists()) {
-                                            throw IllegalStateException("Failed to save profile")
-                                        }
-                                        // Directly proceed to app
+                                        // Best-effort profile write; proceed regardless of result
+                                        try {
+                                            val data = mapOf(
+                                                "email" to email.trim(),
+                                                "name" to name,
+                                                "username" to username,
+                                                "role" to selectedRole.name,
+                                                "createdAt" to com.google.firebase.Timestamp.now()
+                                            )
+                                            firestore.collection("users").document(uid).set(data).await()
+                                        } catch (_: Exception) { /* proceed even if profile write fails */ }
                                         onAuthSuccess(
                                             User(
                                                 id = 0L,
@@ -269,7 +281,13 @@ fun AuthScreen(onAuthSuccess: (User) -> Unit) {
                                         )
                                     }
                                 } catch (e: Exception) {
-                                    errorMessage = "An error occurred: ${e.message}"
+                                    errorMessage = when (e) {
+                                        is FirebaseAuthInvalidCredentialsException, is FirebaseAuthInvalidUserException ->
+                                            "Invalid email or password"
+                                        is FirebaseAuthUserCollisionException -> "Email already in use"
+                                        is FirebaseAuthWeakPasswordException -> "Password is too weak"
+                                        else -> "An error occurred: ${e.message}"
+                                    }
                                 } finally {
                                     isLoading = false
                                 }
@@ -302,6 +320,7 @@ fun AuthScreen(onAuthSuccess: (User) -> Unit) {
                     onClick = {
                         authMode = if (authMode == AuthMode.LOGIN) AuthMode.SIGNUP else AuthMode.LOGIN
                         errorMessage = ""
+                        isLoading = false
                     }
                 ) {
                     Text(

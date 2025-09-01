@@ -31,8 +31,24 @@ fun ManageClassesScreen(modifier: Modifier = Modifier) {
     var className by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<StudentItem>>(emptyList()) }
+    var allStudents by remember { mutableStateOf<List<StudentItem>>(emptyList()) }
     var selected by remember { mutableStateOf<MutableSet<String>>(mutableSetOf()) } // store user document IDs
     var saving by remember { mutableStateOf(false) }
+
+    // Load all students once
+    LaunchedEffect(Unit) {
+        try {
+            val snap = fs.collection("users").whereEqualTo("role", "STUDENT").get().await()
+            allStudents = snap.documents.map { d ->
+                val name = d.getString("name") ?: ""
+                val email = d.getString("email") ?: ""
+                val enroll = d.getString("enrollNumber") ?: ""
+                StudentItem(d.id, name.ifBlank { email }, email, enroll)
+            }
+        } catch (_: Exception) {
+            allStudents = emptyList()
+        }
+    }
 
     Column(
         modifier = modifier
@@ -85,10 +101,11 @@ fun ManageClassesScreen(modifier: Modifier = Modifier) {
                     }) { Text("Search") }
                 }
 
-                if (searchResults.isNotEmpty()) {
+                val itemsToShow = if (query.isBlank()) allStudents else searchResults
+                if (itemsToShow.isNotEmpty()) {
                     Divider()
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.heightIn(max = 280.dp)) {
-                        items(searchResults) { item ->
+                        items(itemsToShow) { item ->
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,

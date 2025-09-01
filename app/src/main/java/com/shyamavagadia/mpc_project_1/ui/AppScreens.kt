@@ -94,31 +94,12 @@ fun AppRoot() {
     var currentUser by remember { mutableStateOf<com.shyamavagadia.mpc_project_1.data.User?>(null) }
     var showProfile by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        // Restore Firebase session if available
-        val fbUser = firebaseAuth.currentUser
-        if (fbUser != null) {
-            try {
-                val doc = firestore.collection("users").document(fbUser.uid).get().await()
-                if (doc.exists()) {
-                    val roleStr = (doc.getString("role") ?: "STUDENT").uppercase()
-                    val role = if (roleStr == "TEACHER") com.shyamavagadia.mpc_project_1.data.UserRole.TEACHER else com.shyamavagadia.mpc_project_1.data.UserRole.STUDENT
-                    currentUser = com.shyamavagadia.mpc_project_1.data.User(
-                        id = 0L,
-                        username = doc.getString("username") ?: "",
-                        password = "",
-                        role = role,
-                        name = doc.getString("name") ?: (fbUser.displayName ?: ""),
-                        email = fbUser.email ?: ""
-                    )
-                }
-            } catch (_: Exception) { /* ignore */ }
-        }
-    }
+    // Auto-restore disabled: require explicit login button press
 
     val onLogout: () -> Unit = {
         firebaseAuth.signOut()
         currentUser = null
+        showProfile = false
     }
 
     var teacherTab by remember { mutableStateOf(TeacherTab.Dashboard) }
